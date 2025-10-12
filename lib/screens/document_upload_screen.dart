@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
+import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/screens/login_screen.dart';
 
 class DocumentUploadScreen extends StatefulWidget {
-  const DocumentUploadScreen({super.key});
+  final String driverId;
+
+  const DocumentUploadScreen({super.key, required this.driverId});
 
   @override
   State<DocumentUploadScreen> createState() => _DocumentUploadScreenState();
@@ -83,22 +87,31 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
     });
 
     try {
-      print('=== DOCUMENT UPLOAD DATA ===');
-      print('Aadhar Card Path: ${_aadharCardImage!.path}');
-      print('Aadhar Card Size: ${await _aadharCardImage!.length()} bytes');
-      print('Driving License Path: ${_drivingLicenseImage!.path}');
-      print(
-        'Driving License Size: ${await _drivingLicenseImage!.length()} bytes',
+      // Upload documents using API
+      final filePaths = [_aadharCardImage!.path, _drivingLicenseImage!.path];
+
+      final documents = await AuthService.uploadDocuments(
+        driverId: widget.driverId,
+        filePaths: filePaths,
       );
-      print('===========================');
 
-      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
 
-      _showSuccessSnackBar('Documents uploaded successfully!');
+      if (documents != null && documents.isNotEmpty) {
+        _showSuccessSnackBar(
+          'Documents uploaded successfully! ${documents.length} files uploaded.',
+        );
 
-      if (mounted) {
+        // Navigate to login screen
         await Future.delayed(const Duration(seconds: 1));
-        Navigator.pop(context);
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+            (route) => false,
+          );
+        }
+      } else {
+        _showErrorSnackBar('Failed to upload documents. Please try again.');
       }
     } catch (e) {
       print('Upload error: $e');
@@ -174,6 +187,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -204,7 +218,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                 ),
               ),
               Expanded(
-                child: Padding(
+                child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24.0,
                     vertical: 8.0,
@@ -230,127 +244,123 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      Expanded(
-                        child: Container(
-                          constraints: const BoxConstraints(maxWidth: 400),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 400),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'Required Documents',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[800],
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 16),
+                              _buildDocumentUploadCard(
+                                title: 'Aadhar Card',
+                                subtitle: 'Government ID',
+                                icon: Icons.credit_card,
+                                image: _aadharCardImage,
+                                onUpload: () => _pickImage('aadhar'),
+                                onRemove: () => _removeDocument('aadhar'),
+                              ),
+                              const SizedBox(height: 12),
+                              _buildDocumentUploadCard(
+                                title: 'Driving License',
+                                subtitle: 'Valid license',
+                                icon: Icons.drive_eta,
+                                image: _drivingLicenseImage,
+                                onUpload: () => _pickImage('license'),
+                                onRemove: () => _removeDocument('license'),
+                              ),
+                              const SizedBox(height: 16),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[50],
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.blue[100]!,
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      color: Colors.blue[700],
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Upload clear and readable documents',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.blue[900],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton(
+                                onPressed: _isUploading ? null : _handleSubmit,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.indigo[600],
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  elevation: 3,
+                                  shadowColor: Colors.indigo.withOpacity(0.5),
+                                ),
+                                child: _isUploading
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                Colors.white,
+                                              ),
+                                        ),
+                                      )
+                                    : const Text(
+                                        'Submit Documents',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
                               ),
                             ],
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Text(
-                                  'Required Documents',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[800],
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 16),
-                                _buildDocumentUploadCard(
-                                  title: 'Aadhar Card',
-                                  subtitle: 'Government ID',
-                                  icon: Icons.credit_card,
-                                  image: _aadharCardImage,
-                                  onUpload: () => _pickImage('aadhar'),
-                                  onRemove: () => _removeDocument('aadhar'),
-                                ),
-                                const SizedBox(height: 12),
-                                _buildDocumentUploadCard(
-                                  title: 'Driving License',
-                                  subtitle: 'Valid license',
-                                  icon: Icons.drive_eta,
-                                  image: _drivingLicenseImage,
-                                  onUpload: () => _pickImage('license'),
-                                  onRemove: () => _removeDocument('license'),
-                                ),
-                                const Spacer(),
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue[50],
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: Colors.blue[100]!,
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.info_outline,
-                                        color: Colors.blue[700],
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          'Upload clear and readable documents',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.blue[900],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                ElevatedButton(
-                                  onPressed: _isUploading
-                                      ? null
-                                      : _handleSubmit,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.indigo[600],
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 14,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    elevation: 3,
-                                    shadowColor: Colors.indigo.withOpacity(0.5),
-                                  ),
-                                  child: _isUploading
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  Colors.white,
-                                                ),
-                                          ),
-                                        )
-                                      : const Text(
-                                          'Submit Documents',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
                     ],
                   ),
                 ),

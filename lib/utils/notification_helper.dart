@@ -72,6 +72,7 @@ class NotificationHelper {
             rideDetails: rideDetails,
             onAccept: onAccept,
             onReject: onReject,
+          
           );
 
           print('📱 Overlay shown from notification tap');

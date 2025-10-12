@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/material.dart';
 import 'package:driver_cerca/services/storage_service.dart';
+import 'package:driver_cerca/models/driver_model.dart';
 
 class AuthService {
-  static const String baseUrl = 'http://192.168.1.14:3000';
+  static const String baseUrl = 'http://192.168.1.18:3000';
   static final Dio _dio = Dio();
 
   // Initialize Dio with base configuration
@@ -46,6 +46,83 @@ class AuthService {
     );
   }
 
+  /// Register new driver
+  static Future<AuthResult> register({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+    required List<double> coordinates, // [longitude, latitude]
+  }) async {
+    try {
+      print('📝 Attempting registration for: $email');
+
+      final response = await _dio.post(
+        '/drivers',
+        data: {
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'password': password,
+          'location': {'coordinates': coordinates},
+        },
+      );
+
+      if (response.statusCode == 201) {
+        final data = response.data;
+
+        if (data['id'] != null) {
+          final driver = DriverModel.fromJson(data['id']);
+          print('✅ Registration successful for: ${driver.name}');
+
+          // Note: API doesn't return token on registration
+          // User needs to login after registration
+          return AuthResult.success(
+            user: driver,
+            token: null,
+            message: data['message'] ?? 'Driver added successfully',
+          );
+        } else {
+          return AuthResult.failure('Invalid response from server');
+        }
+      } else {
+        final message = response.data['message'] ?? 'Registration failed';
+        print('❌ Registration failed: $message');
+        return AuthResult.failure(message);
+      }
+    } on DioException catch (e) {
+      print('❌ DioException during registration: ${e.message}');
+
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        return AuthResult.failure(
+          'Connection timeout. Please check your internet connection.',
+        );
+      } else if (e.type == DioExceptionType.connectionError) {
+        return AuthResult.failure(
+          'Unable to connect to server. Please check your internet connection.',
+        );
+      } else if (e.response?.statusCode == 400) {
+        final message =
+            e.response?.data['message'] ??
+            'Driver with this phone number already exists';
+        return AuthResult.failure(message);
+      } else if (e.response?.statusCode == 500) {
+        return AuthResult.failure('Server error. Please try again later.');
+      } else {
+        final message =
+            e.response?.data['message'] ?? e.message ?? 'Registration failed';
+        return AuthResult.failure(message);
+      }
+    } catch (e) {
+      print('❌ Unexpected error during registration: $e');
+      return AuthResult.failure(
+        'An unexpected error occurred. Please try again.',
+      );
+    }
+  }
+
   /// Login driver with email and password
   static Future<AuthResult> login({
     required String email,
@@ -55,7 +132,7 @@ class AuthService {
       print('🔐 Attempting login for: $email');
 
       final response = await _dio.post(
-        '/driver/login',
+        '/drivers/login',
         data: {'email': email, 'password': password},
       );
 
@@ -83,15 +160,20 @@ class AuthService {
             name: name,
           );
 
-          // Create user object
-          final user = DriverUser(
+          // Create driver object with minimal data
+          // Full profile will be fetched separately
+          final driver = DriverModel(
             id: driverId,
             email: email,
             name: name,
+            phone: '',
+            location: LocationModel(coordinates: [0.0, 0.0]),
             isActive: true,
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
           );
 
-          return AuthResult.success(user: user, token: token);
+          return AuthResult.success(user: driver, token: token);
         } else {
           final message = data['message'] ?? data['error'] ?? 'Login failed';
           print('❌ Login failed: $message');
@@ -158,11 +240,173 @@ class AuthService {
   }
 
   /// Get stored user data
-  static Future<DriverUser?> getStoredUser() async {
+  static Future<DriverModel?> getStoredUser() async {
     try {
-      return await StorageService.getStoredUser();
+      final userData = await StorageService.getStoredUser();
+      if (userData != null) {
+        // Convert old DriverUser to DriverModel if needed
+        return DriverModel(
+          id: userData.id,
+          name: userData.name,
+          email: userData.email,
+          phone: userData.phone ?? '',
+          location: LocationModel(coordinates: [0.0, 0.0]),
+          isActive: userData.isActive,
+          createdAt: userData.createdAt ?? DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+      }
+      return null;
     } catch (e) {
       print('❌ Error getting stored user: $e');
+      return null;
+    }
+  }
+
+  /// Get driver profile from API
+  static Future<DriverModel?> getDriverProfile(String driverId) async {
+    try {
+      print('📥 Fetching driver profile for: $driverId');
+
+      final response = await _dio.get('/drivers/$driverId');
+
+      if (response.statusCode == 200) {
+        final driver = DriverModel.fromJson(response.data);
+        print('✅ Driver profile fetched successfully');
+        return driver;
+      } else {
+        print('❌ Failed to fetch profile: ${response.statusCode}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ DioException fetching profile: ${e.message}');
+      return null;
+    } catch (e) {
+      print('❌ Error fetching profile: $e');
+      return null;
+    }
+  }
+
+  /// Update driver profile
+  static Future<DriverModel?> updateDriverProfile({
+    required String driverId,
+    String? name,
+    String? email,
+    String? phone,
+  }) async {
+    try {
+      print('📝 Updating driver profile for: $driverId');
+
+      final updateData = <String, dynamic>{};
+      if (name != null) updateData['name'] = name;
+      if (email != null) updateData['email'] = email;
+      if (phone != null) updateData['phone'] = phone;
+
+      final response = await _dio.put('/drivers/$driverId', data: updateData);
+
+      if (response.statusCode == 200) {
+        final driver = DriverModel.fromJson(response.data);
+        print('✅ Profile updated successfully');
+
+        // Update stored data
+        await StorageService.storeAuthData(
+          token: await StorageService.getToken() ?? '',
+          driverId: driver.id,
+          email: driver.email,
+          name: driver.name,
+        );
+
+        return driver;
+      } else {
+        print('❌ Failed to update profile: ${response.statusCode}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ DioException updating profile: ${e.message}');
+      return null;
+    } catch (e) {
+      print('❌ Error updating profile: $e');
+      return null;
+    }
+  }
+
+  /// Upload driver documents
+  static Future<List<String>?> uploadDocuments({
+    required String driverId,
+    required List<String> filePaths,
+  }) async {
+    try {
+      print('📤 Uploading ${filePaths.length} documents for driver: $driverId');
+
+      // Create multipart files
+      final List<MultipartFile> files = [];
+      for (String path in filePaths) {
+        files.add(await MultipartFile.fromFile(path));
+      }
+
+      final formData = FormData.fromMap({'documents': files});
+
+      final response = await _dio.post(
+        '/drivers/$driverId/documents',
+        data: formData,
+        options: Options(headers: {'Content-Type': 'multipart/form-data'}),
+      );
+
+      if (response.statusCode == 200) {
+        final documents = List<String>.from(response.data['documents']);
+        print('✅ Documents uploaded successfully: ${documents.length} files');
+        return documents;
+      } else {
+        print('❌ Failed to upload documents: ${response.statusCode}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ DioException uploading documents: ${e.message}');
+      return null;
+    } catch (e) {
+      print('❌ Error uploading documents: $e');
+      return null;
+    }
+  }
+
+  /// Update vehicle information
+  static Future<VehicleInfo?> updateVehicleInfo({
+    required String driverId,
+    required String make,
+    required String model,
+    required int year,
+    required String color,
+    required String licensePlate,
+    required VehicleType vehicleType,
+  }) async {
+    try {
+      print('🚗 Updating vehicle info for driver: $driverId');
+
+      final response = await _dio.patch(
+        '/drivers/$driverId/vehicle',
+        data: {
+          'make': make,
+          'model': model,
+          'year': year,
+          'color': color,
+          'licensePlate': licensePlate,
+          'vehicleType': vehicleType.value,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final vehicleInfo = VehicleInfo.fromJson(response.data['vehicleInfo']);
+        print('✅ Vehicle info updated successfully');
+        return vehicleInfo;
+      } else {
+        print('❌ Failed to update vehicle info: ${response.statusCode}');
+        return null;
+      }
+    } on DioException catch (e) {
+      print('❌ DioException updating vehicle info: ${e.message}');
+      return null;
+    } catch (e) {
+      print('❌ Error updating vehicle info: $e');
       return null;
     }
   }
@@ -172,11 +416,19 @@ class AuthService {
     try {
       final isLoggedIn = await StorageService.isLoggedIn();
       final token = await StorageService.getToken();
-      final user = await StorageService.getStoredUser();
+      final driverId = await StorageService.getDriverId();
 
-      if (isLoggedIn && token != null && user != null) {
-        print('🔄 Auto-login successful for: ${user.name}');
-        return AuthResult.success(user: user, token: token);
+      if (isLoggedIn && token != null && driverId != null) {
+        // Fetch full driver profile from API
+        final driver = await getDriverProfile(driverId);
+
+        if (driver != null) {
+          print('🔄 Auto-login successful for: ${driver.name}');
+          return AuthResult.success(user: driver, token: token);
+        } else {
+          print('❌ Auto-login failed: Could not fetch profile');
+          return AuthResult.failure('Failed to fetch driver profile');
+        }
       } else {
         print('❌ Auto-login failed: Missing credentials');
         return AuthResult.failure('No stored credentials found');
@@ -188,7 +440,7 @@ class AuthService {
   }
 }
 
-/// Driver user model
+/// Driver user model (kept for backward compatibility with StorageService)
 class DriverUser {
   final String id;
   final String email;
@@ -244,16 +496,22 @@ class DriverUser {
 class AuthResult {
   final bool isSuccess;
   final String? message;
-  final DriverUser? user;
+  final DriverModel? user;
   final String? token;
 
   AuthResult._({required this.isSuccess, this.message, this.user, this.token});
 
   factory AuthResult.success({
-    required DriverUser user,
-    required String token,
+    required DriverModel user,
+    String? token,
+    String? message,
   }) {
-    return AuthResult._(isSuccess: true, user: user, token: token);
+    return AuthResult._(
+      isSuccess: true,
+      user: user,
+      token: token,
+      message: message,
+    );
   }
 
   factory AuthResult.failure(String message) {

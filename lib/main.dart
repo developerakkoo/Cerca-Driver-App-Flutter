@@ -2,14 +2,26 @@ import 'dart:ui';
 
 import 'package:driver_cerca/screens/home_screen.dart';
 import 'package:driver_cerca/screens/login_screen.dart';
+import 'package:driver_cerca/screens/main_navigation_screen.dart';
+import 'package:driver_cerca/screens/active_ride_screen.dart';
+import 'package:driver_cerca/screens/rides_screen.dart';
+import 'package:driver_cerca/screens/register_screen.dart';
+import 'package:driver_cerca/screens/document_upload_screen.dart';
+import 'package:driver_cerca/screens/profile_screen.dart';
+import 'package:driver_cerca/screens/earnings_screen.dart';
+import 'package:driver_cerca/screens/edit_profile_screen.dart';
+import 'package:driver_cerca/screens/vehicle_details_screen.dart';
+import 'package:driver_cerca/screens/documents_screen.dart';
+import 'package:driver_cerca/models/ride_model.dart';
+import 'package:driver_cerca/models/driver_model.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'dart:io';
 import 'package:driver_cerca/utils/notification_helper.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
-import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/services/socket_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> onStart(ServiceInstance service) async {
@@ -34,40 +46,80 @@ Map<String, dynamic>? currentRideDetails;
 Function()? currentOnAccept;
 Function()? currentOnReject;
 
+// Global navigator key for navigation from background
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 // Overlay entry point
 @pragma("vm:entry-point")
 void overlayMain() {
-  // Dummy ride data for testing
-  final Map<String, dynamic> dummyRideData = {
-    'rideId': 'RIDE_${DateTime.now().millisecondsSinceEpoch}',
-    'passengerName': 'John Doe',
-    'passengerRating': 4.8,
-    'pickupLocation': '123 Main Street, Downtown',
-    'dropoffLocation': '456 Oak Avenue, Uptown',
-    'distance': '2.5 km',
-    'estimatedFare': '\$12.50',
-    'estimatedTime': '8 minutes',
-    'rideType': 'Standard',
-  };
+  runApp(const OverlayApp());
+}
 
-  runApp(
-    MaterialApp(
+class OverlayApp extends StatefulWidget {
+  const OverlayApp({super.key});
+
+  @override
+  State<OverlayApp> createState() => _OverlayAppState();
+}
+
+class _OverlayAppState extends State<OverlayApp> {
+  Map<String, dynamic>? _rideData;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Listen for ride data from main isolate
+    FlutterOverlayWindow.overlayListener.listen((data) {
+      print('🎧 Overlay received data: $data');
+      if (data is Map && mounted) {
+        setState(() {
+          _rideData = Map<String, dynamic>.from(data);
+        });
+        print('🎨 Overlay updated with ride data:');
+        print('   Passenger: ${_rideData?['passengerName']}');
+        print('   Pickup: ${_rideData?['pickupLocation']}');
+        print('   Dropoff: ${_rideData?['dropoffLocation']}');
+        print('   Fare: ${_rideData?['estimatedFare']}');
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rideData =
+        _rideData ??
+        currentRideDetails ??
+        {
+          'rideId': 'RIDE_${DateTime.now().millisecondsSinceEpoch}',
+          'passengerName': 'Unknown Rider',
+          'passengerRating': 0.0,
+          'pickupLocation': 'Pickup location not available',
+          'dropoffLocation': 'Dropoff location not available',
+          'distance': '0 km',
+          'estimatedFare': '₹0',
+          'estimatedTime': '0 minutes',
+          'rideType': 'Normal',
+        };
+
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Material(
         child: RideRequestOverlay(
-          rideDetails: dummyRideData,
+          rideDetails: rideData,
           onAccept: () {
-            print('✅ Ride accepted from overlay');
+            print('📱 User clicked to open app from overlay');
+            print('   Ride ID: ${rideData['rideId']}');
+
+            // Just close overlay - ride is already in the pending list
+            // User will see it in the app and can accept/reject from there
             FlutterOverlayWindow.closeOverlay();
           },
-          onReject: () {
-            print('❌ Ride rejected from overlay');
-            FlutterOverlayWindow.closeOverlay();
-          },
+          onReject: null, // No reject callback needed
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 @pragma("vm:entry-point")
@@ -106,6 +158,19 @@ Future<void> main() async {
   // Initialize notification helper
   await NotificationHelper.initialize();
 
+  // ✅ Initialize socket service ONCE globally
+  print('🔌 Initializing global socket service...');
+  await SocketService.initialize();
+
+  // ✅ Connect socket immediately (don't wait for MyApp)
+  print('🔌 Connecting socket from main()...');
+  final connected = await SocketService.connect();
+  if (connected) {
+    print('✅ Socket connected successfully in main()');
+  } else {
+    print('⚠️ Socket connection failed in main()');
+  }
+
   // Background service will now be controlled by the home page toggle
   // No automatic initialization here
 
@@ -119,18 +184,54 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    // Removed automatic overlay initialization
-    // Overlay will now only be controlled by the home page toggle
+    WidgetsBinding.instance.addObserver(this);
+    _connectSocket();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    SocketService.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Reconnect if disconnected when app comes to foreground
+      if (!SocketService.isConnected) {
+        print('📱 App resumed, reconnecting socket...');
+        SocketService.connect();
+      }
+    }
+  }
+
+  Future<void> _connectSocket() async {
+    // Check if already connected (from main())
+    if (SocketService.isConnected) {
+      print('✅ Socket already connected from main()');
+      return;
+    }
+
+    print('🔌 Connecting to socket from MyApp...');
+    final connected = await SocketService.connect();
+    if (connected) {
+      print('✅ Global socket connected in MyApp');
+    } else {
+      print('⚠️ Socket connection failed in MyApp');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Cerca Driver',
+      navigatorKey:
+          navigatorKey, // Global navigator key for background navigation
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
       ),
@@ -138,6 +239,41 @@ class _MyAppState extends State<MyApp> {
       routes: {
         '/login': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),
+        '/main': (context) => const MainNavigationScreen(),
+        '/register': (context) => const RegisterScreen(),
+        '/rides': (context) => const RidesScreen(),
+        '/profile': (context) => const ProfileScreen(),
+        '/earnings': (context) => const EarningsScreen(),
+      },
+      onGenerateRoute: (settings) {
+        // Handle routes with arguments
+        if (settings.name == '/active-ride') {
+          final ride = settings.arguments as RideModel;
+          return MaterialPageRoute(
+            builder: (context) => ActiveRideScreen(ride: ride),
+          );
+        } else if (settings.name == '/document-upload') {
+          final driverId = settings.arguments as String;
+          return MaterialPageRoute(
+            builder: (context) => DocumentUploadScreen(driverId: driverId),
+          );
+        } else if (settings.name == '/edit-profile') {
+          final driver = settings.arguments as DriverModel;
+          return MaterialPageRoute(
+            builder: (context) => EditProfileScreen(driver: driver),
+          );
+        } else if (settings.name == '/vehicle-details') {
+          final driver = settings.arguments as DriverModel;
+          return MaterialPageRoute(
+            builder: (context) => VehicleDetailsScreen(driver: driver),
+          );
+        } else if (settings.name == '/documents') {
+          final driver = settings.arguments as DriverModel;
+          return MaterialPageRoute(
+            builder: (context) => DocumentsScreen(driver: driver),
+          );
+        }
+        return null;
       },
       debugShowCheckedModeBanner: false,
     );
@@ -162,38 +298,12 @@ class RideRequestOverlay extends StatefulWidget {
 }
 
 class _RideRequestOverlayState extends State<RideRequestOverlay> {
-  void _handleAcceptRide() {
-    print('=== RIDE ACCEPTED ===');
-    print('Ride ID: ${widget.rideDetails['rideId']}');
-    print('Passenger: ${widget.rideDetails['passengerName']}');
-    print('Pickup: ${widget.rideDetails['pickupLocation']}');
-    print('Dropoff: ${widget.rideDetails['dropoffLocation']}');
-    print('Fare: ${widget.rideDetails['estimatedFare']}');
-    print('Time: ${widget.rideDetails['estimatedTime']}');
-    print('====================');
+  void _handleOpenApp() {
+    print('📱 User clicked to open app from overlay');
+    print('   Ride ID: ${widget.rideDetails['rideId']}');
 
-    // Call custom onAccept callback if provided
+    // Call the onAccept callback (which just closes overlay now)
     widget.onAccept?.call();
-
-    // Close overlay after accepting
-    FlutterOverlayWindow.closeOverlay();
-  }
-
-  void _handleRejectRide() {
-    print('=== RIDE REJECTED ===');
-    print('Ride ID: ${widget.rideDetails['rideId']}');
-    print('Passenger: ${widget.rideDetails['passengerName']}');
-    print('Pickup: ${widget.rideDetails['pickupLocation']}');
-    print('Dropoff: ${widget.rideDetails['dropoffLocation']}');
-    print('Fare: ${widget.rideDetails['estimatedFare']}');
-    print('Time: ${widget.rideDetails['estimatedTime']}');
-    print('====================');
-
-    // Call custom onReject callback if provided
-    widget.onReject?.call();
-
-    // Close overlay after rejecting
-    FlutterOverlayWindow.closeOverlay();
   }
 
   @override
@@ -356,73 +466,37 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
               ),
             ),
 
-            // Action Buttons
+            // Action Button - Open App
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
-                children: [
-                  // Reject Button
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _handleRejectRide,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red[600],
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 2,
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.close, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Reject',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _handleOpenApp,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.indigo[600],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    elevation: 3,
                   ),
-
-                  const SizedBox(width: 12),
-
-                  // Accept Button
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _handleAcceptRide,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green[600],
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.open_in_new, size: 24),
+                      SizedBox(width: 12),
+                      Text(
+                        'Open App to Accept/Reject',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
-                        elevation: 2,
                       ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.check, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Accept',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ],

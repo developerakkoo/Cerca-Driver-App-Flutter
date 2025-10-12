@@ -1,13 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:driver_cerca/main.dart';
-import 'dart:ui' as ui;
-import 'dart:convert';
 
 class OverlayService {
-  static const String _overlayTitle = "Cerca Driver - Ride Request";
-  static const String _overlayContent = "New ride request available";
-
   /// Shows a ride request overlay with the provided ride details
   static Future<void> showRideRequestOverlay({
     required Map<String, dynamic> rideDetails,
@@ -60,6 +55,7 @@ class OverlayService {
         const Duration(seconds: 5),
         onTimeout: () {
           print('Overlay close timed out');
+          return null;
         },
       );
       print('Overlay closed successfully');
@@ -108,37 +104,11 @@ class RideRequestOverlay extends StatefulWidget {
 }
 
 class _RideRequestOverlayState extends State<RideRequestOverlay> {
-  void _handleAcceptRide() {
-    print('=== RIDE ACCEPTED ===');
-    print('Ride ID: ${widget.rideDetails['rideId']}');
-    print('Passenger: ${widget.rideDetails['passengerName']}');
-    print('Pickup: ${widget.rideDetails['pickupLocation']}');
-    print('Dropoff: ${widget.rideDetails['dropoffLocation']}');
-    print('Fare: ${widget.rideDetails['estimatedFare']}');
-    print('Time: ${widget.rideDetails['estimatedTime']}');
-    print('====================');
+  void _handleOpenApp() {
+    print('📱 Opening app to handle ride request...');
+    print('   Ride ID: ${widget.rideDetails['rideId']}');
 
-    // Call custom onAccept callback if provided
-    widget.onAccept?.call();
-
-    // Close overlay after accepting
-    OverlayService.closeOverlay();
-  }
-
-  void _handleRejectRide() {
-    print('=== RIDE REJECTED ===');
-    print('Ride ID: ${widget.rideDetails['rideId']}');
-    print('Passenger: ${widget.rideDetails['passengerName']}');
-    print('Pickup: ${widget.rideDetails['pickupLocation']}');
-    print('Dropoff: ${widget.rideDetails['dropoffLocation']}');
-    print('Fare: ${widget.rideDetails['estimatedFare']}');
-    print('Time: ${widget.rideDetails['estimatedTime']}');
-    print('====================');
-
-    // Call custom onReject callback if provided
-    widget.onReject?.call();
-
-    // Close overlay after rejecting
+    // Close overlay - user will see the ride in app list
     OverlayService.closeOverlay();
   }
 
@@ -316,73 +286,37 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                 ),
               ),
 
-              // Action Buttons
+              // Action Button - Open App
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Row(
-                  children: [
-                    // Reject Button
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _handleRejectRide,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red[600],
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 2,
-                        ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.close, size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              'Reject',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _handleOpenApp,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.indigo[600],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      elevation: 3,
                     ),
-
-                    const SizedBox(width: 12),
-
-                    // Accept Button
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _handleAcceptRide,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green[600],
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.open_in_new, size: 24),
+                        SizedBox(width: 12),
+                        Text(
+                          'Open App to Accept/Reject',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
-                          elevation: 2,
                         ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check, size: 20),
-                            SizedBox(width: 8),
-                            Text(
-                              'Accept',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],

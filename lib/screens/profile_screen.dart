@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/services/socket_service.dart';
 import 'package:driver_cerca/screens/login_screen.dart';
+import 'package:driver_cerca/models/driver_model.dart';
+import 'package:driver_cerca/screens/edit_profile_screen.dart';
+import 'package:driver_cerca/screens/vehicle_details_screen.dart';
+import 'package:driver_cerca/screens/documents_screen.dart';
+import 'package:driver_cerca/screens/ratings_screen.dart';
+import 'package:driver_cerca/screens/notifications_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -11,29 +18,48 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String? _driverName;
-  String? _driverEmail;
+  DriverModel? _driver;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    _loadDriverProfile();
   }
 
-  Future<void> _loadUserData() async {
+  Future<void> _loadDriverProfile() async {
     try {
-      _driverName = await StorageService.getDriverName();
-      _driverEmail = await StorageService.getDriverEmail();
-      setState(() {
-        _isLoading = false;
-      });
+      final driverId = await StorageService.getDriverId();
+      if (driverId != null) {
+        final driver = await AuthService.getDriverProfile(driverId);
+        if (mounted) {
+          setState(() {
+            _driver = driver;
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     } catch (e) {
-      print('Error loading user data: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      print('Error loading driver profile: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  Future<void> _refreshProfile() async {
+    setState(() {
+      _isLoading = true;
+    });
+    await _loadDriverProfile();
   }
 
   Future<void> _handleLogout() async {
@@ -61,7 +87,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (confirmed == true) {
+      // Disconnect socket first
+      await SocketService.disconnect();
+
+      // Then logout
       await AuthService.logout();
+
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -132,7 +163,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            _driverName ?? 'Driver',
+                            _driver?.name ?? 'Driver',
                             style: const TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -141,11 +172,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _driverEmail ?? 'email@example.com',
+                            _driver?.email ?? 'email@example.com',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.white.withOpacity(0.9),
                             ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _driver?.phone ?? '',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white.withOpacity(0.9),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.star, color: Colors.amber, size: 20),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${_driver?.rating.toStringAsFixed(1) ?? '0.0'}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                ' (${_driver?.totalRatings ?? 0} ratings)',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           Container(
@@ -160,15 +222,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
-                                  Icons.verified,
+                                Icon(
+                                  _driver?.isVerified == true
+                                      ? Icons.verified
+                                      : Icons.pending,
                                   color: Colors.white,
                                   size: 16,
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  'Verified Driver',
-                                  style: TextStyle(
+                                  _driver?.isVerified == true
+                                      ? 'Verified Driver'
+                                      : 'Pending Verification',
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -182,6 +248,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
+
+                  // Earnings & Stats Card
+                  if (_driver != null) ...[
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                _buildStatItem(
+                                  Icons.account_balance_wallet,
+                                  'Total Earnings',
+                                  '₹${_driver!.totalEarnings.toStringAsFixed(0)}',
+                                  Colors.green,
+                                ),
+                                Container(
+                                  width: 1,
+                                  height: 40,
+                                  color: Colors.grey[300],
+                                ),
+                                _buildStatItem(
+                                  Icons.local_taxi,
+                                  'Total Rides',
+                                  '${_driver!.rides.length}',
+                                  Colors.blue,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
 
                   // Profile Options
                   Text(
@@ -198,19 +304,78 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: Icons.person_outline,
                     title: 'Edit Profile',
                     subtitle: 'Update your personal information',
-                    onTap: () {},
+                    onTap: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              EditProfileScreen(driver: _driver!),
+                        ),
+                      );
+                      if (result == true) {
+                        _refreshProfile();
+                      }
+                    },
                   ),
                   _buildProfileOption(
                     icon: Icons.drive_eta_outlined,
                     title: 'Vehicle Details',
                     subtitle: 'Manage your vehicle information',
-                    onTap: () {},
+                    onTap: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              VehicleDetailsScreen(driver: _driver!),
+                        ),
+                      );
+                      if (result == true) {
+                        _refreshProfile();
+                      }
+                    },
                   ),
                   _buildProfileOption(
                     icon: Icons.description_outlined,
                     title: 'Documents',
                     subtitle: 'View and update documents',
-                    onTap: () {},
+                    onTap: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              DocumentsScreen(driver: _driver!),
+                        ),
+                      );
+                      if (result == true) {
+                        _refreshProfile();
+                      }
+                    },
+                  ),
+                  _buildProfileOption(
+                    icon: Icons.star_outline,
+                    title: 'My Ratings',
+                    subtitle: 'View ratings from passengers',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const RatingsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildProfileOption(
+                    icon: Icons.notifications_outlined,
+                    title: 'Notifications',
+                    subtitle: 'View all notifications',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NotificationsScreen(),
+                        ),
+                      );
+                    },
                   ),
                   _buildProfileOption(
                     icon: Icons.payment_outlined,
@@ -299,6 +464,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildStatItem(
+    IconData icon,
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 32),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey[800],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
