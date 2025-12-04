@@ -1,13 +1,15 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/models/message_model.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 
 /// MessageService handles all REST API calls related to messaging
 class MessageService {
-  static const String baseUrl = 'http://192.168.1.18:3000';
   static final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: baseUrl,
+      baseUrl: ApiConstants.baseUrl,
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(seconds: 30),
       headers: {'Content-Type': 'application/json'},
@@ -35,8 +37,10 @@ class MessageService {
 
       final data = {
         'rideId': rideId,
-        'sender': {'id': senderId, 'role': senderRole.name},
-        'receiver': {'id': receiverId, 'role': receiverRole.name},
+        'senderId': senderId,
+        'senderModel': senderRole.name == 'driver' ? 'Driver' : 'User',
+        'receiverId': receiverId,
+        'receiverModel': receiverRole.name == 'rider' ? 'User' : 'Driver',
         'message': message,
         'messageType': messageType.name,
       };
@@ -50,12 +54,34 @@ class MessageService {
       );
 
       print('✅ Message sent successfully: ${response.statusCode}');
+      print('📦 Response data type: ${response.data.runtimeType}');
+      print('📦 Response data: ${response.data}');
 
       if (response.data is Map) {
-        if (response.data['message'] != null) {
-          return MessageModel.fromJson(response.data['message']);
+        final responseMap = response.data as Map<String, dynamic>;
+        if (responseMap['message'] != null) {
+          return MessageModel.fromJson(
+            Map<String, dynamic>.from(responseMap['message'] as Map),
+          );
         }
-        return MessageModel.fromJson(response.data);
+        return MessageModel.fromJson(responseMap);
+      } else if (response.data is String) {
+        // Backend might return a string response
+        print('⚠️ Backend returned string response instead of object');
+        // Try to parse as JSON
+        try {
+          final jsonData = json.decode(response.data);
+          if (jsonData is Map) {
+            if (jsonData['message'] != null) {
+              return MessageModel.fromJson(
+                Map<String, dynamic>.from(jsonData['message'] as Map),
+              );
+            }
+            return MessageModel.fromJson(Map<String, dynamic>.from(jsonData));
+          }
+        } catch (e) {
+          print('❌ Failed to parse string response: $e');
+        }
       }
 
       throw Exception('Invalid response format');
@@ -66,8 +92,9 @@ class MessageService {
         print('📦 Response Data: ${e.response?.data}');
       }
       throw Exception('Failed to send message: ${e.message}');
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Error sending message: $e');
+      print('   Stack trace: $stackTrace');
       throw Exception('Failed to send message: $e');
     }
   }

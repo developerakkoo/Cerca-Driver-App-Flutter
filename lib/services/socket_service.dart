@@ -1,4 +1,5 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/services/app_launcher_service.dart';
@@ -26,9 +27,17 @@ class SocketService {
   static RideModel?
   _acceptedRideForNavigation; // Store accepted ride for navigation
 
+  // Driver status - controls whether to listen for rides
+  static bool _isDriverOnline = false;
+
   // Callbacks for UI updates
   static Function(List<RideModel>)? onRidesUpdated;
   static Function(RideModel)? onRideAccepted;
+  static Function(RideModel)?
+  onRideStatusUpdated; // For individual ride status changes
+  static Function(String rideId, String otp)?
+  onOtpVerifiedForCompletion; // For stop OTP
+  static Function(String message)? onOtpVerificationFailed; // For OTP errors
   static Function(MessageModel)? onMessageReceived;
   static Function(bool)? onConnectionStatusChanged;
 
@@ -48,6 +57,35 @@ class SocketService {
 
   /// Get initialization status
   static bool get isInitialized => _isInitialized;
+
+  /// Get driver online status
+  static bool get isDriverOnline => _isDriverOnline;
+
+  /// Set driver online status
+  static void setDriverOnline(bool online) {
+    _isDriverOnline = online;
+    print('🚗 Driver status changed: ${online ? "ONLINE" : "OFFLINE"}');
+    print('   ${online ? "Will" : "Will NOT"} listen for ride requests');
+
+    // Emit driverToggleStatus event to backend to sync isActive in database
+    if (_socket != null && _isConnected && _driverId != null) {
+      try {
+        _socket!.emit('driverToggleStatus', {
+          'driverId': _driverId,
+          'isActive': online,
+        });
+        print('📤 Emitted driverToggleStatus to backend: isActive=$online');
+      } catch (e) {
+        print('❌ Error emitting driverToggleStatus: $e');
+      }
+    } else {
+      print('⚠️ Cannot emit driverToggleStatus:');
+      print('   Socket: ${_socket != null ? "exists" : "null"}');
+      print('   Connected: $_isConnected');
+      print('   Driver ID: ${_driverId ?? "null"}');
+      print('   Status will be synced when socket connects');
+    }
+  }
 
   /// Initialize socket connection
   static Future<void> initialize() async {
@@ -191,6 +229,25 @@ class SocketService {
             } else if (action == 'rejectRide' && rideId != null) {
               print('❌ Processing ride rejection from overlay: $rideId');
 
+              // ✅ Emit rideRejected event to backend
+              if (_socket != null && _isConnected && _driverId != null) {
+                try {
+                  _socket!.emit('rideRejected', {
+                    'rideId': rideId,
+                    'driverId': _driverId,
+                  });
+                  print(
+                    '📤 Emitted rideRejected event to backend: rideId=$rideId, driverId=$_driverId',
+                  );
+                } catch (e) {
+                  print('❌ Error emitting rideRejected event: $e');
+                }
+              } else {
+                print(
+                  '⚠️ Cannot emit rideRejected: socket=${_socket != null}, connected=$_isConnected, driverId=${_driverId != null}',
+                );
+              }
+
               // ✅ Remove ride from pending list
               _pendingRides.removeWhere((r) => r.id == rideId);
               print(
@@ -239,25 +296,53 @@ class SocketService {
       }
 
       if (_driverId == null || _token == null) {
-        print('❌ Cannot connect: Missing driver credentials');
+        print('ℹ️ Cannot connect: Driver not logged in (credentials missing)');
         return false;
       }
 
-      print('🔌 Connecting to socket server...');
+      print('🔌 Connecting to socket server: ${ApiConstants.baseUrl}');
 
-      _socket = IO.io('http://192.168.1.18:3000', <String, dynamic>{
-        'transports': ['websocket'],
-        'autoConnect': false,
-      });
+      // Configure for production HTTPS
+      _socket = IO.io(
+        ApiConstants.baseUrl,
+        IO.OptionBuilder()
+            .setTransports(['websocket', 'polling']) // Try websocket first
+            .disableAutoConnect()
+            .enableReconnection()
+            .setReconnectionAttempts(10)
+            .setReconnectionDelay(2000)
+            .setTimeout(30000) // 30 second timeout for HTTPS
+            .setQuery({'EIO': '4'}) // Explicitly set Engine.IO version
+            .setPath('/socket.io/') // Explicit path
+            .setExtraHeaders({'User-Agent': 'Flutter Driver App'})
+            .build(),
+      );
 
       // Set up event listeners
       _setupEventListeners();
 
       // Connect to server
+      print('🔌 Attempting to connect...');
+      print('   URL: ${ApiConstants.baseUrl}');
+      print('   Transport: polling → websocket (auto upgrade)');
+      print(
+        '   Protocol: ${ApiConstants.baseUrl.startsWith('https') ? 'HTTPS/WSS (secure)' : 'HTTP/WS (non-secure)'}',
+      );
+      print('   Auth: Driver ID = $_driverId');
+      print('   Reconnection: enabled (5 attempts, 1s delay)');
+
       _socket!.connect();
+      print('✅ connect() method called, waiting for onConnect event...');
 
       // Wait for connection with timeout
+      print('⏳ Waiting for connection...');
       await _waitForConnection();
+
+      if (_isConnected) {
+        print('✅ Connection established successfully');
+      } else {
+        print('❌ Connection failed after timeout');
+      }
 
       return _isConnected;
     } catch (e) {
@@ -278,6 +363,29 @@ class SocketService {
           0; // Reset reconnect attempts on successful connection
       _reconnectTimer?.cancel();
       _emitDriverConnect();
+
+      // ✅ Sync driver status with backend after connection
+      // Wait a small delay to ensure driverConnect is processed first
+      // This ensures isActive status is synced when socket connects
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (_isDriverOnline && _driverId != null && _isConnected) {
+          print(
+            '🔄 Syncing driver status with backend: isActive=$_isDriverOnline',
+          );
+          try {
+            _socket!.emit('driverToggleStatus', {
+              'driverId': _driverId,
+              'isActive': _isDriverOnline,
+            });
+            print(
+              '📤 Emitted driverToggleStatus to sync status: isActive=$_isDriverOnline',
+            );
+          } catch (e) {
+            print('❌ Error syncing driver status on connect: $e');
+          }
+        }
+      });
+
       if (onConnectionStatusChanged != null) {
         onConnectionStatusChanged!(true);
       }
@@ -295,11 +403,25 @@ class SocketService {
 
     _socket!.onConnectError((error) {
       print('❌ Socket connection error: $error');
+      print('   Error type: ${error.runtimeType}');
+      print('   URL: ${ApiConstants.baseUrl}');
+      print('   Driver ID: $_driverId');
+      print('   Transports: polling, websocket');
       _isConnected = false;
     });
 
     _socket!.onError((error) {
       print('❌ Socket error: $error');
+      print('   Error type: ${error.runtimeType}');
+      print('   URL: ${ApiConstants.baseUrl}');
+      if (error.toString().contains('timeout')) {
+        print('   ⏰ This is a TIMEOUT error');
+        print('   Possible causes:');
+        print('   1. Backend Node.js server is down or not responding');
+        print('   2. Nginx is not running or misconfigured');
+        print('   3. Firewall/Security Group blocking port 443');
+        print('   4. Server URL is incorrect');
+      }
     });
 
     // Custom events
@@ -354,7 +476,9 @@ class SocketService {
     // Ride lifecycle events
     // Driver arrived confirmation
     _socket!.on('driverArrived', (data) {
-      print('✅ Driver arrived confirmation: $data');
+      print('✅ Driver arrived confirmation received');
+      print('   Data type: ${data.runtimeType}');
+      print('   Data: $data');
       _handleDriverArrived(data);
     });
 
@@ -422,6 +546,12 @@ class SocketService {
       print('❌ Error event: $data');
       _handleErrorEvent(data);
     });
+
+    // Catch-all listener for debugging - shows ALL events received
+    _socket!.onAny((event, data) {
+      print('🔍 [DEBUG] Socket event received: "$event"');
+      print('   Data: $data');
+    });
   }
 
   /// Wait for socket connection with timeout
@@ -451,8 +581,42 @@ class SocketService {
     }
   }
 
-  /// Start location updates (every 5-10 seconds when online)
+  /// Emit driver location once (on connection, not periodic)
+  static Future<void> emitLocationOnce() async {
+    if (_socket == null || !_isConnected || _driverId == null) return;
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+
+      final locationData = {
+        'driverId': _driverId,
+        'location': {
+          'coordinates': [position.longitude, position.latitude],
+        },
+      };
+
+      _socket!.emit('driverLocationUpdate', locationData);
+      print(
+        '📍 Location sent once on connection: ${position.latitude}, ${position.longitude}',
+      );
+    } catch (e) {
+      print('❌ Error emitting location once: $e');
+    }
+  }
+
+  /// Start location updates (only for active rides)
   static void startLocationUpdates({String? rideId}) {
+    // If no rideId, don't start periodic updates
+    if (rideId == null) {
+      print(
+        '⚠️ startLocationUpdates called without rideId - periodic updates only for active rides',
+      );
+      return;
+    }
+
     // Stop any existing timer first
     if (_locationTimer != null && _locationTimer!.isActive) {
       print('⚠️ Location updates already running, stopping old timer first');
@@ -461,12 +625,10 @@ class SocketService {
     }
 
     _currentRideId = rideId;
-    final interval = rideId != null
-        ? const Duration(seconds: 5) // 5 seconds during ride
-        : const Duration(seconds: 10); // 10 seconds when idle
+    const interval = Duration(seconds: 5); // 5 seconds during ride
 
     print(
-      '📍 Starting location updates (interval: ${interval.inSeconds}s, rideId: $rideId)',
+      '📍 Starting location updates for active ride (interval: ${interval.inSeconds}s, rideId: $rideId)',
     );
 
     _locationTimer = Timer.periodic(interval, (timer) async {
@@ -666,6 +828,48 @@ class SocketService {
       }
     } catch (e) {
       print('❌ Error accepting ride: $e');
+      print('   Error details: ${e.toString()}');
+    }
+  }
+
+  /// Reject a ride
+  static void rejectRide(String rideId) {
+    if (_socket == null || !_isConnected || _driverId == null) {
+      print('❌ Cannot reject ride: Socket not connected');
+      print('   Socket: $_socket');
+      print('   Connected: $_isConnected');
+      print('   Driver ID: $_driverId');
+      return;
+    }
+
+    try {
+      // Emit rideRejected event
+      final eventData = {'rideId': rideId, 'driverId': _driverId};
+      print('📤 Emitting rideRejected event:');
+      print('   Event name: rideRejected');
+      print('   Ride ID: $rideId');
+      print('   Driver ID: $_driverId');
+      print('   Socket connected: $_isConnected');
+      print('   Full data: $eventData');
+
+      _socket!.emit('rideRejected', eventData);
+      print('✅ Emitted rideRejected event for ride: $rideId');
+
+      // Remove from pending rides
+      _pendingRides.removeWhere((r) => r.id == rideId);
+      print(
+        '✅ Removed ride from pending list. Remaining: ${_pendingRides.length}',
+      );
+
+      // Update UI if callback is available
+      if (onRidesUpdated != null) {
+        onRidesUpdated!(_pendingRides);
+        print('✅ Notified UI of list update');
+      } else {
+        print('ℹ️ UI callback null, list still updated');
+      }
+    } catch (e) {
+      print('❌ Error rejecting ride: $e');
       print('   Error details: ${e.toString()}');
     }
   }
@@ -904,28 +1108,65 @@ class SocketService {
   static void _handleNewRideRequest(dynamic data) {
     print('🚗 New ride request received: $data');
 
+    // ✅ CHECK DRIVER STATUS FIRST
+    if (!_isDriverOnline) {
+      print('⛔ Driver is OFFLINE - ignoring ride request');
+      return;
+    }
+
     try {
       // Parse the complete ride object
       final ride = RideModel.fromJson(data);
 
-      // Add to pending rides list
-      _pendingRides.add(ride);
-      print(
-        '📋 Added ride to pending list. Total pending: ${_pendingRides.length}',
-      );
+      // ✅ Check if ride already exists to prevent duplicates
+      final existingIndex = _pendingRides.indexWhere((r) => r.id == ride.id);
+      if (existingIndex >= 0) {
+        // Update existing ride
+        _pendingRides[existingIndex] = ride;
+        print(
+          '🔄 Updated existing ride in pending list: ${ride.id}. Total pending: ${_pendingRides.length}',
+        );
+      } else {
+        // Add new ride
+        _pendingRides.add(ride);
+        print(
+          '📋 Added new ride to pending list: ${ride.id}. Total pending: ${_pendingRides.length}',
+        );
+      }
 
       // ✅ Check if app is in foreground or background
+      // If onRidesUpdated callback is registered, app is in foreground (HomeScreen is active)
+      // If callback is null, app is in background or HomeScreen is not active
       final isAppInForeground = onRidesUpdated != null;
+
+      print('🔍 App state detection:');
+      print(
+        '   - onRidesUpdated callback: ${onRidesUpdated != null ? "REGISTERED" : "NULL"}',
+      );
+      print(
+        '   - App state: ${isAppInForeground ? "FOREGROUND" : "BACKGROUND"}',
+      );
+      print('   - Total pending rides: ${_pendingRides.length}');
 
       if (isAppInForeground) {
         // App is in FOREGROUND (HomeScreen visible)
-        print('📱 App in foreground - showing ride in list only');
-        onRidesUpdated!(_pendingRides); // Update UI list
+        print('📱 App in foreground - showing ride in list only (NO overlay)');
+        try {
+          onRidesUpdated!(_pendingRides); // Update UI list
+          print('✅ UI list updated successfully');
+        } catch (e) {
+          print('❌ Error updating UI list: $e');
+        }
         // DON'T show overlay - user can see the list
       } else {
-        // App is in BACKGROUND
-        print('🌙 App in background - showing overlay');
-        _showRideRequestOverlay(ride); // Show overlay
+        // App is in BACKGROUND or HomeScreen is not active
+        print('🌙 App in background or HomeScreen inactive - showing overlay');
+        try {
+          _showRideRequestOverlay(ride); // Show overlay
+          print('✅ Overlay display triggered');
+        } catch (e) {
+          print('❌ Error showing overlay: $e');
+        }
       }
     } catch (e) {
       print('❌ Error handling new ride request: $e');
@@ -934,10 +1175,39 @@ class SocketService {
 
   static void _handleRideCancelled(dynamic data) {
     print('❌ Ride cancelled: $data');
+    // Stop location updates when ride is cancelled
+    stopLocationUpdates();
   }
 
   static void _handleDriverStatusUpdate(dynamic data) {
     print('📊 Driver status updated: $data');
+
+    try {
+      if (data is Map) {
+        final isActive = data['isActive'] as bool?;
+        final isOnline = data['isOnline'] as bool?;
+        final isBusy = data['isBusy'] as bool?;
+        final message = data['message'] as String?;
+
+        // Sync local state with backend response
+        if (isActive != null) {
+          _isDriverOnline = isActive;
+          print(
+            '✅ Synced local driver status: ${isActive ? "ONLINE" : "OFFLINE"}',
+          );
+        }
+
+        print('   Backend Status:');
+        print('   - isActive: $isActive');
+        print('   - isOnline: $isOnline');
+        print('   - isBusy: $isBusy');
+        if (message != null) {
+          print('   - Message: $message');
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling driver status update: $e');
+    }
   }
 
   static void _handleServerMessage(dynamic data) {
@@ -967,27 +1237,106 @@ class SocketService {
   }
 
   static void _handleOtpVerified(dynamic data) {
-    print('✅ OTP verified successfully: ${data['success']}');
-    // UI will handle the next action based on which OTP was verified
+    print('✅ OTP verified successfully');
+    print('   Data: $data');
+
+    try {
+      if (data is Map) {
+        final success = data['success'] ?? false;
+        print('   Success: $success');
+
+        if (success && data['ride'] != null) {
+          // Parse the ride object to get the ride ID and OTP
+          final rideData = Map<String, dynamic>.from(data['ride'] as Map);
+          final rideId = rideData['_id'] ?? rideData['id'];
+          final startOtp = rideData['startOtp'];
+          final stopOtp = rideData['stopOtp'];
+          final currentStatus = rideData['status'];
+
+          print('   Ride ID: $rideId');
+          print('   Current Status: $currentStatus');
+          print('   Start OTP: $startOtp');
+          print('   Stop OTP: $stopOtp');
+
+          // Parse the complete ride to update status
+          final ride = RideModel.fromJson(rideData);
+          print('   Parsed ride status: ${ride.status.displayName}');
+
+          // Check if this is start or stop OTP based on current status
+          if (currentStatus == 'accepted' || currentStatus == 'arrived') {
+            // This is a start OTP verification
+            print('   → This is START OTP verification');
+            print('   → Auto-emitting rideStarted...');
+            // We need the OTP that was just verified - it's the startOtp
+            emitRideStarted(rideId, startOtp.toString());
+          } else if (currentStatus == 'in_progress' ||
+              currentStatus == 'ongoing') {
+            // This is a stop OTP verification
+            print('   → This is STOP OTP verification');
+            print('   → Ride completion requires fare - handled by UI');
+            if (onOtpVerifiedForCompletion != null) {
+              onOtpVerifiedForCompletion!(rideId, stopOtp.toString());
+            }
+          }
+        }
+      }
+    } catch (e, stackTrace) {
+      print('❌ Error handling OTP verification: $e');
+      print('   Stack trace: $stackTrace');
+    }
   }
 
   static void _handleOtpVerificationFailed(dynamic data) {
-    print('❌ OTP verification failed: ${data['message']}');
-    // TODO: Show error to driver
+    print('❌ OTP verification failed');
+    print('   Data: $data');
+
+    try {
+      if (data is Map) {
+        final message = data['message'] ?? 'Invalid OTP';
+        print('   Error message: $message');
+
+        // Notify UI via callback
+        if (onOtpVerificationFailed != null) {
+          onOtpVerificationFailed!(message);
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling OTP verification failure: $e');
+    }
   }
 
   static void _handleDriverArrived(dynamic data) {
     print('✅ Driver arrived at pickup confirmed');
+    print('   Parsing data...');
+    print('   Data keys: ${data is Map ? data.keys : 'Not a map'}');
+
     try {
       if (data is Map && data['ride'] != null) {
+        print('   Found ride in data');
         final ride = RideModel.fromJson(data['ride']);
         print('🚗 Ride ID: ${ride.id}');
         print('📍 Status: ${ride.status.displayName}');
+        print('📍 Status enum: ${ride.status}');
         print('⏰ Arrived at: ${ride.driverArrivedAt}');
-        // TODO: Update UI to show arrived status
+
+        // Notify UI to update ride status
+        if (onRideStatusUpdated != null) {
+          print('   Calling onRideStatusUpdated callback...');
+          onRideStatusUpdated!(ride);
+          print('✅ Notified UI of ride status update');
+        } else {
+          print('⚠️ onRideStatusUpdated callback is null!');
+        }
+      } else {
+        print('⚠️ Invalid data format - ride not found');
+        print('   Data is Map: ${data is Map}');
+        print(
+          '   Has ride key: ${data is Map ? data.containsKey('ride') : false}',
+        );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Error parsing driver arrived confirmation: $e');
+      print('   Stack trace: $stackTrace');
     }
   }
 
@@ -997,9 +1346,13 @@ class SocketService {
       final ride = RideModel.fromJson(data);
       print('📍 Ride ID: ${ride.id}');
       print('⏱️ Started at: ${ride.actualStartTime}');
-      // TODO: Update UI to show ride in progress
-      // TODO: Start navigation to dropoff
-      // TODO: Update location frequency to 5 seconds
+
+      // Notify UI to update ride status
+      if (onRideStatusUpdated != null) {
+        onRideStatusUpdated!(ride);
+        print('✅ Notified UI of ride status update');
+      }
+
       startLocationUpdates(rideId: ride.id);
     } catch (e) {
       print('❌ Error parsing started ride: $e');
@@ -1012,31 +1365,44 @@ class SocketService {
       final ride = RideModel.fromJson(data);
       print('💰 Fare: ₹${ride.fare}');
       print('⏱️ Duration: ${ride.actualDuration} minutes');
+
+      // Notify UI to update ride status
+      if (onRideStatusUpdated != null) {
+        onRideStatusUpdated!(ride);
+        print('✅ Notified UI of ride status update');
+      }
+
       // Stop location updates
       stopLocationUpdates();
-      // TODO: Show ride summary screen
-      // TODO: Request rating from driver
     } catch (e) {
       print('❌ Error parsing completed ride: $e');
     }
   }
 
   static void _handleReceiveMessage(dynamic data) {
-    print('💬 New message from rider: ${data['message']}');
+    print('💬 Received message data type: ${data.runtimeType}');
+    print('💬 Received message data: $data');
+
     try {
-      final message = MessageModel.fromJson(data);
-      print('📨 Message ID: ${message.id}');
-      print('   From: ${message.sender.role.name}');
-      print('   Text: ${message.message}');
+      // Check if data is a Map (complete message object) or just a string
+      if (data is Map) {
+        final message = MessageModel.fromJson(data as Map<String, dynamic>);
+        print('📨 Message ID: ${message.id}');
+        print('   From: ${message.sender.role.name}');
+        print('   Text: ${message.message}');
 
-      // Notify UI via callback
-      if (onMessageReceived != null) {
-        onMessageReceived!(message);
+        // Notify UI via callback
+        if (onMessageReceived != null) {
+          onMessageReceived!(message);
+        }
+      } else if (data is String) {
+        // If backend sends just the message text, log it
+        print('⚠️ Received plain text message: $data');
+        print('⚠️ Expected a complete message object, got string instead');
       }
-
-      // TODO: Show notification if app is in background
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Error parsing received message: $e');
+      print('   Stack trace: $stackTrace');
     }
   }
 
@@ -1192,6 +1558,26 @@ class SocketService {
 
       currentOnReject = () {
         print('❌ Ride ${ride.id} rejected from overlay');
+
+        // ✅ Emit rideRejected event to backend
+        if (_socket != null && _isConnected && _driverId != null) {
+          try {
+            _socket!.emit('rideRejected', {
+              'rideId': ride.id,
+              'driverId': _driverId,
+            });
+            print(
+              '📤 Emitted rideRejected event to backend: rideId=${ride.id}, driverId=$_driverId',
+            );
+          } catch (e) {
+            print('❌ Error emitting rideRejected event: $e');
+          }
+        } else {
+          print(
+            '⚠️ Cannot emit rideRejected: socket=${_socket != null}, connected=$_isConnected, driverId=${_driverId != null}',
+          );
+        }
+
         _pendingRides.removeWhere((r) => r.id == ride.id);
         if (onRidesUpdated != null) {
           onRidesUpdated!(_pendingRides);

@@ -1,11 +1,12 @@
 import 'package:dio/dio.dart';
+import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 
 /// EmergencyService handles emergency alert API calls
 class EmergencyService {
   static final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://192.168.1.18:3000',
+      baseUrl: ApiConstants.baseUrl,
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
     ),

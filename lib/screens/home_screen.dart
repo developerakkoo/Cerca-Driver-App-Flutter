@@ -4,7 +4,6 @@ import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/services/socket_service.dart';
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/screens/active_ride_screen.dart';
-import 'package:driver_cerca/widgets/connection_status_indicator.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -56,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     true,
   ]; // [On, Off] - Off is selected by default
   bool _isProcessing = false;
+  bool _isRequestingPermissions = false; // Track if we're in permission flow
   List<RideModel> _pendingRides = [];
 
   @override
@@ -79,6 +79,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       print('📱 Loaded driver status: ${isOnline ? "ONLINE" : "OFFLINE"}');
 
+      // ✅ Restore driver online status in SocketService
+      SocketService.setDriverOnline(isOnline);
+
       // If driver was online, ensure services are running
       if (isOnline && SocketService.isConnected) {
         print('✅ Driver was online, services should be running');
@@ -91,6 +94,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('driver_is_online', isOnline);
     print('💾 Saved driver status: ${isOnline ? "ONLINE" : "OFFLINE"}');
+  }
+
+  /// Get detailed status text based on current state
+  String _getDetailedStatusText() {
+    if (!isSelected[0]) {
+      return 'You are offline and will not receive ride requests';
+    }
+
+    // Driver is online
+    if (!SocketService.isConnected) {
+      return 'You are online but socket is disconnected. Reconnecting...';
+    }
+
+    return 'You are online and ready to receive ride requests';
   }
 
   @override
@@ -127,6 +144,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _pendingRides = SocketService.getPendingRides();
         print('✅ Synced pending rides. Count: ${_pendingRides.length}');
       });
+
+      // ✅ If we were requesting permissions, re-check them now
+      if (_isRequestingPermissions) {
+        print(
+          '🔄 App resumed after permission request - re-checking permissions',
+        );
+        _completePermissionFlow();
+      }
 
       // ✅ Check for overlay actions from SharedPreferences FIRST (must await!)
       _checkOverlayAction().then((_) {
@@ -254,31 +279,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // User cancelled, keep toggle off
       setState(() {
         isSelected = [false, true];
+        _isProcessing = false;
       });
       return;
     }
 
+    // Mark that we're requesting permissions
+    setState(() {
+      _isRequestingPermissions = true;
+    });
+
     // Show loading indicator
     _showLoadingSnackBar('Requesting permissions...');
 
-    // Request all permissions
-    final Map<String, bool> results =
-        await PermissionService.requestAllPermissions();
+    try {
+      // Request all permissions
+      final Map<String, bool> results =
+          await PermissionService.requestAllPermissions();
 
-    // Show permission status
-    await PermissionService.showPermissionStatus(context, results);
+      // Show permission status
+      await PermissionService.showPermissionStatus(context, results);
+
+      // Complete the permission flow
+      await _completePermissionFlow();
+    } catch (e) {
+      print('❌ Error in permission flow: $e');
+      // Reset state on error
+      setState(() {
+        isSelected = [false, true];
+        _isProcessing = false;
+        _isRequestingPermissions = false;
+      });
+      _showErrorSnackBar('An error occurred while requesting permissions.');
+    }
+  }
+
+  /// Complete the permission flow after permissions are requested
+  Future<void> _completePermissionFlow() async {
+    // Re-check all permissions to ensure they're actually granted
+    // (important when user returns from settings)
+    // Use checkAllPermissions to avoid requesting again
+    final Map<String, bool> results =
+        await PermissionService.checkAllPermissions();
 
     // Check if all permissions were granted
     final bool allGranted = results.values.every((isGranted) => isGranted);
+
+    // Reset permission request flag
+    setState(() {
+      _isRequestingPermissions = false;
+    });
 
     if (allGranted) {
       // All permissions granted, enable toggle
       setState(() {
         isSelected = [true, false];
+        _isProcessing = false;
       });
 
-      // ✅ Save driver status as ONLINE
+      // ✅ Save driver status as ONLINE Local Storage
       await _saveDriverStatus(true);
+
+      // ✅ Set driver online in SocketService (enables ride listening)
+      SocketService.setDriverOnline(true);
 
       _showSuccessSnackBar(
         'Driver mode enabled! You will now receive ride requests.',
@@ -290,16 +353,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Start test events
       SocketService.startTestEvents();
 
-      // Start location updates
-      SocketService.startLocationUpdates();
+      // Emit location once on connection (not periodic)
+      SocketService.emitLocationOnce();
     } else {
       // Some permissions denied, keep toggle off
       setState(() {
         isSelected = [false, true];
+        _isProcessing = false;
       });
 
       // ✅ Save driver status as OFFLINE
       await _saveDriverStatus(false);
+
+      // ✅ Set driver offline in SocketService (disables ride listening)
+      SocketService.setDriverOnline(false);
 
       _showWarningSnackBar(
         'Some permissions were denied. Driver mode cannot be enabled.',
@@ -315,6 +382,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       // ✅ Save driver status as OFFLINE
       await _saveDriverStatus(false);
+
+      // ✅ Set driver offline in SocketService (disables ride listening)
+      SocketService.setDriverOnline(false);
 
       // Stop test events first
       SocketService.stopTestEvents();
@@ -486,13 +556,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Driver Dashboard"),
+        title: const Text("Dashboard"),
         backgroundColor: Colors.indigo[600],
         foregroundColor: Colors.white,
         actions: [
-          const Padding(
-            padding: EdgeInsets.only(right: 12.0),
-            child: ConnectionStatusIndicator(),
+          // const Padding(
+          //   padding: EdgeInsets.only(right: 12.0),
+          //   child: ConnectionStatusIndicator(),
+          // ),
+          // Status text (Online/Offline)
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Center(
+              child: Text(
+                isSelected[0] ? 'Online' : 'Offline',
+                style: TextStyle(
+                  color: isSelected[0] ? Colors.greenAccent : Colors.grey[300],
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
@@ -548,9 +632,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      isSelected[0]
-                          ? 'You are online and ready to receive ride requests'
-                          : 'You are offline and will not receive ride requests',
+                      _getDetailedStatusText(),
                       style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                     ),
                   ],
@@ -728,12 +810,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () {
-                      // Remove from local list - create new list to avoid unmodifiable error
+                      // Emit reject socket event and update UI
+                      SocketService.rejectRide(ride.id);
+
+                      // Update local list immediately for better UX
                       setState(() {
                         _pendingRides = _pendingRides
                             .where((r) => r.id != ride.id)
                             .toList();
                       });
+
                       _showInfoSnackBar('Ride rejected');
                     },
                     icon: const Icon(Icons.close),

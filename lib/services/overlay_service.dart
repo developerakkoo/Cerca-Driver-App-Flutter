@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:driver_cerca/main.dart';
+import 'dart:async';
 
 class OverlayService {
   /// Shows a ride request overlay with the provided ride details
@@ -104,9 +105,52 @@ class RideRequestOverlay extends StatefulWidget {
 }
 
 class _RideRequestOverlayState extends State<RideRequestOverlay> {
+  Timer? _timeoutTimer;
+  int _remainingSeconds = 15;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimeoutTimer();
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimeoutTimer() {
+    // Start a 15-second countdown timer
+    _timeoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      setState(() {
+        _remainingSeconds--;
+      });
+
+      if (_remainingSeconds <= 0) {
+        timer.cancel();
+        _handleTimeout();
+      }
+    });
+  }
+
+  void _handleTimeout() {
+    print('⏰ Overlay timeout after 15 seconds - auto-closing');
+    // Close the overlay
+    FlutterOverlayWindow.closeOverlay();
+    // Clear pending ride data
+    if (widget.onReject != null) {
+      widget.onReject?.call();
+    }
+  }
+
   void _handleOpenApp() {
     print('📱 Opening app to handle ride request...');
     print('   Ride ID: ${widget.rideDetails['rideId']}');
+
+    // Cancel the timeout timer since user took action
+    _timeoutTimer?.cancel();
 
     // Close overlay - user will see the ride in app list
     OverlayService.closeOverlay();
@@ -166,12 +210,36 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'Tap to accept or reject',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 14,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Tap to accept or reject',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '$_remainingSeconds',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -308,7 +376,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                         Icon(Icons.open_in_new, size: 24),
                         SizedBox(width: 12),
                         Text(
-                          'Open App to Accept/Reject',
+                          'Open App to Accept/Reject!',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,

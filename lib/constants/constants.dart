@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 
 // App Colors
 class AppColors {
-  static const primary = Color(0xFF1976D2);
-  static const secondary = Color(0xFF42A5F5);
+  static const primary = Color(0xFF333652);
+  static const secondary = Color(0xFFDB6A42);
   static const background = Color(0xFFF5F5F5);
   static const textPrimary = Color(0xFF212121);
   static const textSecondary = Color(0xFF757575);
@@ -26,7 +26,8 @@ class AppDimensions {
 
 // API Endpoints
 class ApiEndpoints {
-  static const baseUrl = 'https://api.drivercerca.com';
+  static const baseUrl = 'https://api.myserverdevops.com';
+  // static const baseUrl = 'http://192.168.1.14:3000';
   static const login = '$baseUrl/auth/login';
   static const register = '$baseUrl/auth/register';
 }

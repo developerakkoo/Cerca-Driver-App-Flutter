@@ -47,12 +47,90 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
     _loadUnreadMessageCount();
     _initializeMap();
     _startLocationTracking();
+    _setupRideStatusListener();
+  }
+
+  void _setupRideStatusListener() {
+    print('🎧 Setting up ride status listener for ride: ${_ride.id}');
+
+    // Listen for ride status updates from socket
+    SocketService.onRideStatusUpdated = (updatedRide) {
+      print('🔔 Ride status update received');
+      print('   Updated Ride ID: ${updatedRide.id}');
+      print('   Current Ride ID: ${_ride.id}');
+      print('   Match: ${updatedRide.id == _ride.id}');
+      print('   Mounted: $mounted');
+      print('   New Status: ${updatedRide.status.displayName}');
+
+      if (updatedRide.id == _ride.id && mounted) {
+        print('   ✅ Updating ride state...');
+        setState(() {
+          _ride = updatedRide;
+        });
+        print(
+          '   ✅ Ride status updated in UI: ${updatedRide.status.displayName}',
+        );
+
+        // If ride just completed, show rating dialog
+        if (updatedRide.status == RideStatus.completed) {
+          _handleRideCompletion();
+        }
+      } else {
+        print('   ⚠️ Skipping update - ID mismatch or not mounted');
+      }
+    };
+
+    // Listen for stop OTP verification success
+    SocketService.onOtpVerifiedForCompletion = (rideId, otp) async {
+      print('🔑 Stop OTP verified, emitting rideCompleted...');
+      if (rideId == _ride.id && mounted) {
+        // Emit rideCompleted with fare
+        SocketService.emitRideCompleted(_ride.id, _ride.fare, otp);
+      }
+    };
+
+    // Listen for OTP verification failures
+    SocketService.onOtpVerificationFailed = (message) {
+      print('❌ OTP verification failed: $message');
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ $message'), backgroundColor: Colors.red),
+        );
+      }
+    };
+  }
+
+  Future<void> _handleRideCompletion() async {
+    print('🏁 Handling ride completion...');
+    setState(() => _isLoading = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('✅ Ride completed')));
+
+      // Show rating dialog for the rider
+      if (_ride.rider != null) {
+        await showRatingDialog(
+          context: context,
+          rideId: _ride.id,
+          riderId: _ride.rider!.id,
+          riderName: _ride.rider!.fullName,
+        );
+      }
+
+      Navigator.pop(context);
+    }
   }
 
   @override
   void dispose() {
     _locationSubscription?.cancel();
     _mapController?.dispose();
+    SocketService.onRideStatusUpdated = null; // Clear callback
+    SocketService.onOtpVerifiedForCompletion = null; // Clear callback
+    SocketService.onOtpVerificationFailed = null; // Clear callback
     super.dispose();
   }
 
@@ -231,6 +309,53 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
     setState(() => _isLoading = true);
     try {
       SocketService.emitDriverArrived(_ride.id);
+
+      // Backend doesn't send confirmation event, so we need to update status locally
+      // Create a new ride object with updated status
+      final updatedRide = RideModel(
+        id: _ride.id,
+        rider: _ride.rider,
+        driver: _ride.driver,
+        pickupAddress: _ride.pickupAddress,
+        dropoffAddress: _ride.dropoffAddress,
+        pickupLocation: _ride.pickupLocation,
+        dropoffLocation: _ride.dropoffLocation,
+        fare: _ride.fare,
+        distanceInKm: _ride.distanceInKm,
+        status: RideStatus.arrived, // Update status
+        rideType: _ride.rideType,
+        cancelledBy: _ride.cancelledBy,
+        startOtp: _ride.startOtp,
+        stopOtp: _ride.stopOtp,
+        paymentMethod: _ride.paymentMethod,
+        paymentStatus: _ride.paymentStatus,
+        driverSocketId: _ride.driverSocketId,
+        userSocketId: _ride.userSocketId,
+        actualStartTime: _ride.actualStartTime,
+        actualEndTime: _ride.actualEndTime,
+        estimatedDuration: _ride.estimatedDuration,
+        actualDuration: _ride.actualDuration,
+        estimatedArrivalTime: _ride.estimatedArrivalTime,
+        driverArrivedAt: DateTime.now(), // Set arrived time
+        riderRating: _ride.riderRating,
+        driverRating: _ride.driverRating,
+        tips: _ride.tips,
+        discount: _ride.discount,
+        promoCode: _ride.promoCode,
+        cancellationReason: _ride.cancellationReason,
+        cancellationFee: _ride.cancellationFee,
+        transactionId: _ride.transactionId,
+        customSchedule: _ride.customSchedule,
+        createdAt: _ride.createdAt,
+        updatedAt: DateTime.now(),
+      );
+
+      setState(() {
+        _ride = updatedRide;
+      });
+
+      print('✅ Updated local ride status to: ${_ride.status.displayName}');
+
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -278,24 +403,10 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
     HapticFeedback.heavyImpact(); // Strong haptic feedback for ride completion
     setState(() => _isLoading = true);
     try {
+      // Just verify the OTP
+      // The callback chain will handle: otpVerified -> emitRideCompleted -> rideCompleted event -> show rating
       SocketService.verifyStopOtp(_ride.id, otp);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('✅ Ride completed')));
-
-        // Show rating dialog for the rider
-        if (_ride.rider != null) {
-          await showRatingDialog(
-            context: context,
-            rideId: _ride.id,
-            riderId: _ride.rider!.id,
-            riderName: _ride.rider!.fullName,
-          );
-        }
-
-        Navigator.pop(context);
-      }
+      print('🔐 Verifying stop OTP...');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(

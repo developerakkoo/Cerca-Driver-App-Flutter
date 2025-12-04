@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:async';
 
 import 'package:driver_cerca/screens/home_screen.dart';
 import 'package:driver_cerca/screens/login_screen.dart';
@@ -158,23 +159,35 @@ Future<void> main() async {
   // Initialize notification helper
   await NotificationHelper.initialize();
 
-  // ✅ Initialize socket service ONCE globally
+  // ✅ Defer socket initialization to after app starts
+  // This ensures UI can render first without blocking
+  runApp(const MyApp());
+
+  // Initialize socket after app is running (non-blocking)
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    _initializeSocketAfterAppStart();
+  });
+}
+
+// Helper function to initialize socket after app starts
+Future<void> _initializeSocketAfterAppStart() async {
   print('🔌 Initializing global socket service...');
   await SocketService.initialize();
 
-  // ✅ Connect socket immediately (don't wait for MyApp)
-  print('🔌 Connecting socket from main()...');
-  final connected = await SocketService.connect();
-  if (connected) {
-    print('✅ Socket connected successfully in main()');
+  // Only try to connect if initialization was successful (credentials exist)
+  if (SocketService.isInitialized) {
+    print('🔌 Connecting socket from main()...');
+    final connected = await SocketService.connect();
+    if (connected) {
+      print('✅ Socket connected successfully in main()');
+    } else {
+      print('⚠️ Socket connection failed in main()');
+    }
   } else {
-    print('⚠️ Socket connection failed in main()');
+    print(
+      'ℹ️ Socket initialization skipped - no driver credentials (user not logged in)',
+    );
   }
-
-  // Background service will now be controlled by the home page toggle
-  // No automatic initialization here
-
-  runApp(const MyApp());
 }
 
 class MyApp extends StatefulWidget {
@@ -189,7 +202,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _connectSocket();
+    // ✅ Don't connect socket here - it's already handled in main()
+    // If connection failed in main(), it will retry on app resume
   }
 
   @override
@@ -207,22 +221,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         print('📱 App resumed, reconnecting socket...');
         SocketService.connect();
       }
-    }
-  }
-
-  Future<void> _connectSocket() async {
-    // Check if already connected (from main())
-    if (SocketService.isConnected) {
-      print('✅ Socket already connected from main()');
-      return;
-    }
-
-    print('🔌 Connecting to socket from MyApp...');
-    final connected = await SocketService.connect();
-    if (connected) {
-      print('✅ Global socket connected in MyApp');
-    } else {
-      print('⚠️ Socket connection failed in MyApp');
     }
   }
 
@@ -298,12 +296,98 @@ class RideRequestOverlay extends StatefulWidget {
 }
 
 class _RideRequestOverlayState extends State<RideRequestOverlay> {
+  Timer? _timeoutTimer;
+  int _remainingSeconds = 15;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimeoutTimer();
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startTimeoutTimer() {
+    // Start a 15-second countdown timer
+    _timeoutTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      print('🕒 Timer running: $_remainingSeconds seconds remaining');
+      if (_remainingSeconds <= 1) {
+        print('🕒 Timer expired: $_remainingSeconds seconds remaining');
+        timer.cancel();
+        _handleTimeout();
+      } else {
+        print('🕒 Timer running: $_remainingSeconds seconds remaining');
+        setState(() {
+          _remainingSeconds--;
+        });
+      }
+    });
+  }
+
+  void _handleTimeout() {
+    print('⏰ Overlay timeout after 15 seconds - auto-closing');
+    // Close the overlay
+    FlutterOverlayWindow.closeOverlay();
+    // Clear pending ride data
+    if (widget.onReject != null) {
+      widget.onReject?.call();
+    }
+  }
+
   void _handleOpenApp() {
     print('📱 User clicked to open app from overlay');
     print('   Ride ID: ${widget.rideDetails['rideId']}');
 
+    // Cancel the timeout timer since user took action
+    _timeoutTimer?.cancel();
+
     // Call the onAccept callback (which just closes overlay now)
     widget.onAccept?.call();
+  }
+
+  /// Calculate estimated time in minutes based on distance
+  /// Assumes average speed of 35 km/h for city driving
+  String _calculateEstimatedTime(String distanceStr) {
+    try {
+      // Parse distance string (e.g., "2.5 km" -> 2.5)
+      final distanceMatch = RegExp(r'([\d.]+)\s*km').firstMatch(distanceStr);
+      if (distanceMatch == null) {
+        // If parsing fails, return the original estimatedTime or a default
+        return widget.rideDetails['estimatedTime'] ?? 'N/A';
+      }
+
+      final distanceKm = double.tryParse(distanceMatch.group(1) ?? '0');
+      if (distanceKm == null || distanceKm <= 0) {
+        return widget.rideDetails['estimatedTime'] ?? 'N/A';
+      }
+
+      // Calculate time: distance (km) / speed (km/h) * 60 = minutes
+      // Using average city speed of 35 km/h
+      const averageSpeedKmh = 35.0;
+      final timeInMinutes = (distanceKm / averageSpeedKmh * 60).round();
+
+      // Format as "X minutes" or "X min"
+      if (timeInMinutes == 1) {
+        return '1 minute';
+      } else if (timeInMinutes < 60) {
+        return '$timeInMinutes minutes';
+      } else {
+        final hours = timeInMinutes ~/ 60;
+        final minutes = timeInMinutes % 60;
+        if (minutes == 0) {
+          return hours == 1 ? '1 hour' : '$hours hours';
+        } else {
+          return '$hours h ${minutes} min';
+        }
+      }
+    } catch (e) {
+      print('❌ Error calculating estimated time: $e');
+      return widget.rideDetails['estimatedTime'] ?? 'N/A';
+    }
   }
 
   @override
@@ -344,12 +428,36 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    'Tap to accept or reject',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 14,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Tap to accept or reject',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$_remainingSeconds',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -457,7 +565,9 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                         _buildInfoColumn(
                           Icons.access_time,
                           'Time',
-                          widget.rideDetails['estimatedTime'],
+                          _calculateEstimatedTime(
+                            widget.rideDetails['distance'],
+                          ),
                         ),
                       ],
                     ),
@@ -488,7 +598,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                       Icon(Icons.open_in_new, size: 24),
                       SizedBox(width: 12),
                       Text(
-                        'Open App to Accept/Reject',
+                        'Open App to Accept or Reject Ride!',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,

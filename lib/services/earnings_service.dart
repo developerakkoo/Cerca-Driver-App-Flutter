@@ -1,13 +1,13 @@
 import 'package:dio/dio.dart';
+import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/models/earnings_model.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 
 /// EarningsService handles all REST API calls related to earnings
 class EarningsService {
-  static const String baseUrl = 'http://192.168.1.18:3000';
   static final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: baseUrl,
+      baseUrl: ApiConstants.baseUrl,
       connectTimeout: const Duration(seconds: 30),
       receiveTimeout: const Duration(seconds: 30),
       headers: {'Content-Type': 'application/json'},

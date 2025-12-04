@@ -376,6 +376,8 @@ class PermissionService {
             if (denied.isNotEmpty)
               TextButton(
                 onPressed: () async {
+                  // Close the dialog first before opening settings
+                  Navigator.of(context).pop();
                   try {
                     await openAppSettings();
                   } catch (e) {
@@ -416,9 +418,49 @@ class PermissionService {
     }
   }
 
-  /// Checks if all required permissions are granted
+  /// Checks if all required permissions are granted (without requesting)
   static Future<bool> areAllPermissionsGranted() async {
-    final results = await requestAllPermissions();
+    final results = await checkAllPermissions();
     return results.values.every((isGranted) => isGranted);
+  }
+
+  /// Checks all required permissions without requesting them
+  static Future<Map<String, bool>> checkAllPermissions() async {
+    final Map<String, bool> results = {};
+
+    // 1. Overlay Permission
+    if (Platform.isAndroid) {
+      results['overlay'] = await FlutterOverlayWindow.isPermissionGranted();
+    } else {
+      results['overlay'] = true; // iOS doesn't need overlay permission
+    }
+
+    // 2. Background Activity Permission
+    if (Platform.isAndroid) {
+      final notificationStatus = await Permission.notification.status;
+      final exactAlarmStatus = await Permission.scheduleExactAlarm.status;
+      results['background'] =
+          notificationStatus.isGranted && exactAlarmStatus.isGranted;
+    } else {
+      results['background'] = true; // iOS handles this differently
+    }
+
+    // 3. Battery Optimization
+    if (Platform.isAndroid) {
+      results['battery'] =
+          await Permission.ignoreBatteryOptimizations.isGranted;
+    } else {
+      results['battery'] = true; // iOS doesn't have battery optimization
+    }
+
+    // 4. Location Permission
+    if (Platform.isAndroid) {
+      final locationStatus = await Permission.location.status;
+      results['location'] = locationStatus.isGranted;
+    } else {
+      results['location'] = true; // iOS handles this differently
+    }
+
+    return results;
   }
 }

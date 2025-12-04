@@ -1,14 +1,14 @@
 import 'package:dio/dio.dart';
+import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/models/driver_model.dart';
 
 class AuthService {
-  static const String baseUrl = 'http://192.168.1.18:3000';
   static final Dio _dio = Dio();
 
   // Initialize Dio with base configuration
   static Future<void> initialize() async {
-    _dio.options.baseUrl = baseUrl;
+    _dio.options.baseUrl = ApiConstants.baseUrl;
     _dio.options.connectTimeout = const Duration(seconds: 10);
     _dio.options.receiveTimeout = const Duration(seconds: 10);
     _dio.options.sendTimeout = const Duration(seconds: 10);
