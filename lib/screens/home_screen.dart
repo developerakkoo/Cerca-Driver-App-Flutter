@@ -2,10 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:driver_cerca/services/permission_service.dart';
 import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/services/socket_service.dart';
+import 'package:driver_cerca/providers/socket_provider.dart'
+    show SocketProvider;
+import 'package:driver_cerca/providers/socket_provider.dart'
+    as socket_provider
+    show ConnectionState;
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/screens/active_ride_screen.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 
 // Top-level function for background service
 @pragma('vm:entry-point')
@@ -15,7 +21,6 @@ Future<void> onStart(ServiceInstance service) async {
   // Listen for stop command
   service.on('stop').listen((event) {
     print('🛑 Stop command received in background service');
-    SocketService.stopTestEvents();
     SocketService.stopLocationUpdates();
     service.stopSelf();
   });
@@ -28,14 +33,12 @@ Future<void> onStart(ServiceInstance service) async {
   // Socket is already connected from main app, just verify
   if (SocketService.isConnected) {
     print('✅ Socket already connected from main app');
-    SocketService.startTestEvents();
   } else {
     print('⏳ Waiting for socket connection from main app...');
     // Wait a bit and check again
     await Future.delayed(const Duration(seconds: 2));
     if (SocketService.isConnected) {
       print('✅ Socket connected');
-      SocketService.startTestEvents();
     } else {
       print('⚠️ Socket not connected yet');
     }
@@ -67,24 +70,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _registerCallback();
   }
 
-  /// Load driver online/offline status from storage
+  /// Load driver online/offline status from storage and sync with SocketProvider
   Future<void> _loadDriverStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    final isOnline = prefs.getBool('driver_is_online') ?? false;
+    final savedIsOnline = prefs.getBool('driver_is_online') ?? false;
 
+    final socketProvider = Provider.of<SocketProvider>(context, listen: false);
+
+    // ✅ Sync SocketProvider with saved status
+    // This ensures the actual driver status matches what was saved
+    if (socketProvider.isDriverOnline != savedIsOnline) {
+      print(
+        '🔄 [HomeScreen] Syncing SocketProvider status with saved status: ${savedIsOnline ? "ONLINE" : "OFFLINE"}',
+      );
+      socketProvider.setDriverOnline(savedIsOnline);
+    }
+
+    // Update local toggle state to match SocketProvider (reactive)
     if (mounted) {
       setState(() {
-        isSelected = [isOnline, !isOnline];
+        isSelected = [
+          socketProvider.isDriverOnline,
+          !socketProvider.isDriverOnline,
+        ];
       });
 
-      print('📱 Loaded driver status: ${isOnline ? "ONLINE" : "OFFLINE"}');
+      print(
+        '📱 [HomeScreen] Loaded driver status: ${socketProvider.isDriverOnline ? "ONLINE" : "OFFLINE"}',
+      );
+      print('   Socket connected: ${socketProvider.isConnected}');
+      print('   Socket ID: ${socketProvider.socketId}');
 
-      // ✅ Restore driver online status in SocketService
-      SocketService.setDriverOnline(isOnline);
-
-      // If driver was online, ensure services are running
-      if (isOnline && SocketService.isConnected) {
-        print('✅ Driver was online, services should be running');
+      // If driver was online, ensure socket is connected
+      if (socketProvider.isDriverOnline && !socketProvider.isConnected) {
+        print(
+          '⚠️ [HomeScreen] Driver is online but socket not connected, attempting connection...',
+        );
+        socketProvider.connect();
       }
     }
   }
@@ -96,18 +118,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     print('💾 Saved driver status: ${isOnline ? "ONLINE" : "OFFLINE"}');
   }
 
-  /// Get detailed status text based on current state
-  String _getDetailedStatusText() {
-    if (!isSelected[0]) {
+  /// Get detailed status text based on actual SocketProvider state
+  String _getDetailedStatusText(SocketProvider socketProvider) {
+    // Check actual driver online status from SocketProvider
+    if (!socketProvider.isDriverOnline) {
       return 'You are offline and will not receive ride requests';
     }
 
-    // Driver is online
-    if (!SocketService.isConnected) {
+    // Driver is online - check connection state
+    // Use prefixed enum to avoid conflict with Flutter's ConnectionState
+    final state = socketProvider.connectionState;
+    if (state == socket_provider.ConnectionState.connecting) {
+      return 'Connecting to server...';
+    } else if (state == socket_provider.ConnectionState.error) {
+      return 'Connection error. Please check your internet.';
+    } else if (state == socket_provider.ConnectionState.disconnected) {
       return 'You are online but socket is disconnected. Reconnecting...';
+    } else if (state == socket_provider.ConnectionState.connected) {
+      return 'You are online and ready to receive ride requests';
     }
-
-    return 'You are online and ready to receive ride requests';
+    return 'Unknown connection state';
   }
 
   @override
@@ -120,8 +150,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   /// Register the callback for ride updates
+  /// Note: We still register callback for overlay detection (when callback is null = background)
+  /// But we also use SocketProvider for reactive state
   void _registerCallback() {
-    print('📝 Registering ride updates callback');
+    print('📝 [HomeScreen] Registering ride updates callback');
+    final socketProvider = Provider.of<SocketProvider>(context, listen: false);
+
+    // Register callback for overlay detection (preserve overlay functionality)
     SocketService.onRidesUpdated = (rides) {
       if (mounted) {
         setState(() {
@@ -129,6 +164,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
       }
     };
+
+    // ✅ Sync with both SocketProvider and SocketService to ensure we have latest rides
+    // This handles cases where rides were added while callback was null
+    final socketServiceRides = SocketService.getPendingRides();
+    final providerRides = socketProvider.pendingRides;
+
+    // Use the one with more rides (most up-to-date)
+    final latestRides = socketServiceRides.length >= providerRides.length
+        ? socketServiceRides
+        : providerRides;
+
+    setState(() {
+      _pendingRides = latestRides;
+    });
+    print('✅ [HomeScreen] Callback registered and state synced');
+    print('   Pending rides from SocketService: ${socketServiceRides.length}');
+    print('   Pending rides from SocketProvider: ${providerRides.length}');
+    print('   Using latest: ${_pendingRides.length}');
   }
 
   @override
@@ -139,10 +192,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       print('📱 App resumed - registering ride updates callback');
       _registerCallback();
 
-      // ✅ Sync with current pending rides from SocketService
+      // ✅ Sync with current pending rides from both SocketProvider and SocketService
+      // This ensures we get rides that were added while app was in background
+      final socketProvider = Provider.of<SocketProvider>(
+        context,
+        listen: false,
+      );
+      final socketServiceRides = SocketService.getPendingRides();
+      final providerRides = socketProvider.pendingRides;
+
+      // Use the one with more rides (most up-to-date)
+      final latestRides = socketServiceRides.length >= providerRides.length
+          ? socketServiceRides
+          : providerRides;
+
       setState(() {
-        _pendingRides = SocketService.getPendingRides();
-        print('✅ Synced pending rides. Count: ${_pendingRides.length}');
+        _pendingRides = latestRides;
+        print('✅ [HomeScreen] Synced pending rides on resume');
+        print('   SocketService rides: ${socketServiceRides.length}');
+        print('   SocketProvider rides: ${providerRides.length}');
+        print('   Using latest: ${_pendingRides.length}');
+        print('   Socket ID: ${socketProvider.socketId}');
       });
 
       // ✅ If we were requesting permissions, re-check them now
@@ -207,8 +277,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         if (now - timestamp < 60000) {
           if (action == 'acceptRide') {
-            print('✅ Processing accept from SharedPreferences');
-            SocketService.acceptRide(rideId);
+            print('✅ [HomeScreen] Processing accept from SharedPreferences');
+            final socketProvider = Provider.of<SocketProvider>(
+              context,
+              listen: false,
+            );
+            socketProvider.acceptRide(rideId);
           } else if (action == 'rejectRide') {
             print('❌ Processing reject from SharedPreferences');
             // Just remove from list
@@ -276,9 +350,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     if (!userAccepted) {
-      // User cancelled, keep toggle off
+      // User cancelled - use SocketProvider to set offline
+      final socketProvider = Provider.of<SocketProvider>(
+        context,
+        listen: false,
+      );
+      socketProvider.setDriverOnline(false);
+      await _saveDriverStatus(false);
       setState(() {
-        isSelected = [false, true];
         _isProcessing = false;
       });
       return;
@@ -304,9 +383,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _completePermissionFlow();
     } catch (e) {
       print('❌ Error in permission flow: $e');
-      // Reset state on error
+      // Reset state on error - use SocketProvider
+      final socketProvider = Provider.of<SocketProvider>(
+        context,
+        listen: false,
+      );
+      socketProvider.setDriverOnline(false);
+      await _saveDriverStatus(false);
       setState(() {
-        isSelected = [false, true];
         _isProcessing = false;
         _isRequestingPermissions = false;
       });
@@ -330,18 +414,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _isRequestingPermissions = false;
     });
 
+    final socketProvider = Provider.of<SocketProvider>(context, listen: false);
+
     if (allGranted) {
-      // All permissions granted, enable toggle
+      // All permissions granted - toggle will update reactively via Consumer
       setState(() {
-        isSelected = [true, false];
         _isProcessing = false;
       });
 
-      // ✅ Save driver status as ONLINE Local Storage
+      // ✅ Set driver online via SocketProvider (enables ride listening)
+      // This will automatically update the toggle via Consumer
+      socketProvider.setDriverOnline(true);
+
+      // ✅ Save driver status as ONLINE to Local Storage
       await _saveDriverStatus(true);
 
-      // ✅ Set driver online in SocketService (enables ride listening)
-      SocketService.setDriverOnline(true);
+      print('✅ [HomeScreen] Driver set to online via SocketProvider');
+      print('   Socket ID: ${socketProvider.socketId}');
+      print('   Connection state: ${socketProvider.connectionState}');
 
       _showSuccessSnackBar(
         'Driver mode enabled! You will now receive ride requests.',
@@ -350,23 +440,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Start background service or overlay service here
       await _startDriverServices();
 
-      // Start test events
-      SocketService.startTestEvents();
-
       // Emit location once on connection (not periodic)
       SocketService.emitLocationOnce();
+
+      // Log driver services started (driver already set online above)
+      print('✅ [HomeScreen] Driver services started');
+      print('   Socket ID: ${socketProvider.socketId}');
+      print('   Connection state: ${socketProvider.connectionState}');
     } else {
-      // Some permissions denied, keep toggle off
+      // Some permissions denied - toggle will update reactively via Consumer
       setState(() {
-        isSelected = [false, true];
         _isProcessing = false;
       });
+
+      // ✅ Set driver offline via SocketProvider (disables ride listening)
+      // This will automatically update the toggle via Consumer
+      socketProvider.setDriverOnline(false);
 
       // ✅ Save driver status as OFFLINE
       await _saveDriverStatus(false);
 
-      // ✅ Set driver offline in SocketService (disables ride listening)
-      SocketService.setDriverOnline(false);
+      print(
+        '✅ [HomeScreen] Driver set to offline via SocketProvider (permissions denied)',
+      );
 
       _showWarningSnackBar(
         'Some permissions were denied. Driver mode cannot be enabled.',
@@ -376,23 +472,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _handleToggleOff() async {
     try {
-      setState(() {
-        isSelected = [false, true];
-      });
+      final socketProvider = Provider.of<SocketProvider>(
+        context,
+        listen: false,
+      );
+
+      // ✅ Set driver offline via SocketProvider (disables ride listening)
+      // Toggle will update reactively via Consumer
+      socketProvider.setDriverOnline(false);
 
       // ✅ Save driver status as OFFLINE
       await _saveDriverStatus(false);
 
-      // ✅ Set driver offline in SocketService (disables ride listening)
-      SocketService.setDriverOnline(false);
-
-      // Stop test events first
-      SocketService.stopTestEvents();
-
       // Stop location updates
       SocketService.stopLocationUpdates();
 
-      // Stop background services and disconnect socket
+      print('✅ [HomeScreen] Driver services stopped');
+      print('   Socket ID: ${socketProvider.socketId}');
+
+      // Stop background services (keep socket connected for app functionality)
       await _stopDriverServices();
 
       _showInfoSnackBar(
@@ -406,12 +504,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _startDriverServices() async {
     try {
-      // Socket is already initialized in main(), just ensure it's connected
-      if (!SocketService.isConnected) {
-        print('🔌 Socket not connected, connecting now...');
-        await SocketService.connect();
+      // Socket is managed by SocketProvider, ensure it's connected
+      final socketProvider = Provider.of<SocketProvider>(
+        context,
+        listen: false,
+      );
+      if (!socketProvider.isConnected) {
+        print(
+          '🔌 [HomeScreen] Socket not connected, connecting via SocketProvider...',
+        );
+        await socketProvider.connect();
+        print('✅ [HomeScreen] Socket connection attempt completed');
+        print('   Socket ID: ${socketProvider.socketId}');
       } else {
-        print('✅ Socket already connected');
+        print('✅ [HomeScreen] Socket already connected');
+        print('   Socket ID: ${socketProvider.socketId}');
       }
 
       // Start background service
@@ -560,40 +667,73 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         backgroundColor: Colors.indigo[600],
         foregroundColor: Colors.white,
         actions: [
-          // const Padding(
-          //   padding: EdgeInsets.only(right: 12.0),
-          //   child: ConnectionStatusIndicator(),
-          // ),
-          // Status text (Online/Offline)
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: Center(
-              child: Text(
-                isSelected[0] ? 'Online' : 'Offline',
-                style: TextStyle(
-                  color: isSelected[0] ? Colors.greenAccent : Colors.grey[300],
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
+          // ✅ Use Consumer to reactively show driver online status
+          Consumer<SocketProvider>(
+            builder: (context, socketProvider, child) {
+              final isOnline = socketProvider.isDriverOnline;
+
+              // Sync local toggle state with SocketProvider state
+              if (isOnline != isSelected[0] && mounted) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      isSelected = [isOnline, !isOnline];
+                    });
+                  }
+                });
+              }
+
+              return Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: Center(
+                  child: Text(
+                    isOnline ? 'Online' : 'Offline',
+                    style: TextStyle(
+                      color: isOnline ? Colors.greenAccent : Colors.grey[300],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: ToggleButtons(
-              children: const <Widget>[
-                Text("ON", style: TextStyle(fontWeight: FontWeight.bold)),
-                Text("OFF", style: TextStyle(fontWeight: FontWeight.bold)),
-              ],
-              isSelected: isSelected,
-              onPressed: _isProcessing ? null : _handleToggle,
-              direction: Axis.horizontal,
-              selectedColor: Colors.white,
-              fillColor: Colors.green,
-              color: Colors.grey[600],
-              constraints: const BoxConstraints(minHeight: 40, minWidth: 60),
-              borderRadius: BorderRadius.circular(8),
-            ),
+          Consumer<SocketProvider>(
+            builder: (context, socketProvider, child) {
+              final isOnline = socketProvider.isDriverOnline;
+
+              // Sync local toggle state with SocketProvider state
+              if (isOnline != isSelected[0] && mounted) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      isSelected = [isOnline, !isOnline];
+                    });
+                  }
+                });
+              }
+
+              return Padding(
+                padding: const EdgeInsets.only(right: 16.0),
+                child: ToggleButtons(
+                  children: const <Widget>[
+                    Text("ON", style: TextStyle(fontWeight: FontWeight.bold)),
+                    Text("OFF", style: TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                  isSelected: [isOnline, !isOnline],
+                  onPressed: _isProcessing ? null : _handleToggle,
+                  direction: Axis.horizontal,
+                  selectedColor: Colors.white,
+                  fillColor: Colors.green,
+                  color: Colors.grey[600],
+                  constraints: const BoxConstraints(
+                    minHeight: 40,
+                    minWidth: 60,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -602,42 +742,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status Card
-            Card(
-              elevation: 4,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+            // Status Card - ✅ Reactive to SocketProvider state
+            Consumer<SocketProvider>(
+              builder: (context, socketProvider, child) {
+                final isOnline = socketProvider.isDriverOnline;
+
+                return Card(
+                  elevation: 4,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          isSelected[0]
-                              ? Icons.directions_car
-                              : Icons.directions_car_outlined,
-                          color: isSelected[0] ? Colors.green : Colors.grey,
-                          size: 24,
+                        Row(
+                          children: [
+                            Icon(
+                              isOnline
+                                  ? Icons.directions_car
+                                  : Icons.directions_car_outlined,
+                              color: isOnline ? Colors.green : Colors.grey,
+                              size: 24,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Driver Status',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(height: 8),
                         Text(
-                          'Driver Status',
+                          _getDetailedStatusText(socketProvider),
                           style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[800],
+                            fontSize: 14,
+                            color: Colors.grey[600],
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _getDetailedStatusText(),
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
 
             const SizedBox(height: 16),
@@ -676,26 +825,62 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ],
 
             // Pending Rides List (only show when driver is online)
-            if (isSelected[0] && _pendingRides.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Text(
-                'Pending Ride Requests (${_pendingRides.length})',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _pendingRides.length,
-                  itemBuilder: (context, index) {
-                    final ride = _pendingRides[index];
-                    return _buildRideCard(ride);
-                  },
-                ),
-              ),
-            ],
+            // ✅ Use Consumer to reactively listen to SocketProvider changes
+            // This ensures rides added via overlay also appear in the list
+            Consumer<SocketProvider>(
+              builder: (context, socketProvider, child) {
+                if (socketProvider.isDriverOnline) {
+                  // Get latest rides from both sources
+                  final socketServiceRides = SocketService.getPendingRides();
+                  final providerRides = socketProvider.pendingRides;
+
+                  // Use the one with more rides (most up-to-date)
+                  // This handles cases where rides were added while callback was null
+                  final latestRides =
+                      socketServiceRides.length >= providerRides.length
+                      ? socketServiceRides
+                      : providerRides;
+
+                  // Sync local state with latest rides (for callback updates)
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && latestRides.length != _pendingRides.length) {
+                      setState(() {
+                        _pendingRides = latestRides;
+                      });
+                    }
+                  });
+
+                  if (latestRides.isNotEmpty) {
+                    return Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 20),
+                          Text(
+                            'Pending Ride Requests (${latestRides.length})',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: latestRides.length,
+                              itemBuilder: (context, index) {
+                                final ride = latestRides[index];
+                                return _buildRideCard(ride);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                }
+                return const SizedBox.shrink();
+              },
+            ),
           ],
         ),
       ),
@@ -810,8 +995,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () {
-                      // Emit reject socket event and update UI
-                      SocketService.rejectRide(ride.id);
+                      // Reject ride via SocketProvider
+                      final socketProvider = Provider.of<SocketProvider>(
+                        context,
+                        listen: false,
+                      );
+                      socketProvider.rejectRide(ride.id);
 
                       // Update local list immediately for better UX
                       setState(() {
@@ -843,8 +1032,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             .toList();
                       });
 
-                      // Emit accept socket event
-                      SocketService.acceptRide(ride.id);
+                      // Accept ride via SocketProvider
+                      final socketProvider = Provider.of<SocketProvider>(
+                        context,
+                        listen: false,
+                      );
+                      socketProvider.acceptRide(ride.id);
 
                       _showSuccessSnackBar('Ride accepted! Navigating...');
 

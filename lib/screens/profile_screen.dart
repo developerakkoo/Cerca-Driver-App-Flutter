@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:driver_cerca/services/storage_service.dart';
-import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/providers/auth_provider.dart';
 import 'package:driver_cerca/services/socket_service.dart';
 import 'package:driver_cerca/screens/login_screen.dart';
-import 'package:driver_cerca/models/driver_model.dart';
 import 'package:driver_cerca/screens/edit_profile_screen.dart';
 import 'package:driver_cerca/screens/vehicle_details_screen.dart';
 import 'package:driver_cerca/screens/documents_screen.dart';
 import 'package:driver_cerca/screens/ratings_screen.dart';
 import 'package:driver_cerca/screens/notifications_screen.dart';
+import 'package:provider/provider.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -18,9 +18,6 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  DriverModel? _driver;
-  bool _isLoading = true;
-
   @override
   void initState() {
     super.initState();
@@ -28,38 +25,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadDriverProfile() async {
-    try {
-      final driverId = await StorageService.getDriverId();
-      if (driverId != null) {
-        final driver = await AuthService.getDriverProfile(driverId);
-        if (mounted) {
-          setState(() {
-            _driver = driver;
-            _isLoading = false;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    } catch (e) {
-      print('Error loading driver profile: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final driverId = await StorageService.getDriverId();
+    if (driverId != null && authProvider.driver == null) {
+      await authProvider.getProfile(driverId);
     }
   }
 
   Future<void> _refreshProfile() async {
-    setState(() {
-      _isLoading = true;
-    });
-    await _loadDriverProfile();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final driverId = await StorageService.getDriverId();
+    if (driverId != null) {
+      await authProvider.getProfile(driverId);
+    }
   }
 
   Future<void> _handleLogout() async {
@@ -87,11 +65,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (confirmed == true) {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      
       // Disconnect socket first
       await SocketService.disconnect();
 
       // Then logout
-      await AuthService.logout();
+      await authProvider.logout();
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -110,9 +90,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: Colors.indigo[600],
         foregroundColor: Colors.white,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Container(
+      body: Consumer<AuthProvider>(
+        builder: (context, authProvider, _) {
+          final _driver = authProvider.driver;
+          final _isLoading = authProvider.isLoading;
+
+          if (_isLoading && _driver == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          return Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
@@ -266,7 +253,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 _buildStatItem(
                                   Icons.account_balance_wallet,
                                   'Total Earnings',
-                                  '₹${_driver!.totalEarnings.toStringAsFixed(0)}',
+                                  '₹${_driver.totalEarnings.toStringAsFixed(0)}',
                                   Colors.green,
                                 ),
                                 Container(
@@ -277,7 +264,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 _buildStatItem(
                                   Icons.local_taxi,
                                   'Total Rides',
-                                  '${_driver!.rides.length}',
+                                  '${_driver.rides.length}',
                                   Colors.blue,
                                 ),
                               ],
@@ -463,7 +450,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 20),
                 ],
               ),
-            ),
+            );
+        },
+      ),
     );
   }
 

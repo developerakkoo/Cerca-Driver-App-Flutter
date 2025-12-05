@@ -23,6 +23,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:driver_cerca/services/auth_service.dart';
 import 'package:driver_cerca/services/socket_service.dart';
+import 'package:driver_cerca/providers/auth_provider.dart';
+import 'package:driver_cerca/providers/earnings_provider.dart';
+import 'package:driver_cerca/providers/socket_provider.dart';
+import 'package:provider/provider.dart';
 
 @pragma('vm:entry-point')
 Future<void> onStart(ServiceInstance service) async {
@@ -170,24 +174,11 @@ Future<void> main() async {
 }
 
 // Helper function to initialize socket after app starts
+// Note: SocketProvider now handles socket initialization and connection
 Future<void> _initializeSocketAfterAppStart() async {
-  print('🔌 Initializing global socket service...');
-  await SocketService.initialize();
-
-  // Only try to connect if initialization was successful (credentials exist)
-  if (SocketService.isInitialized) {
-    print('🔌 Connecting socket from main()...');
-    final connected = await SocketService.connect();
-    if (connected) {
-      print('✅ Socket connected successfully in main()');
-    } else {
-      print('⚠️ Socket connection failed in main()');
-    }
-  } else {
-    print(
-      'ℹ️ Socket initialization skipped - no driver credentials (user not logged in)',
-    );
-  }
+  print('🔌 [main] Initializing socket via SocketProvider...');
+  // SocketProvider will handle initialization and connection
+  // Connection will happen automatically when provider is created
 }
 
 class MyApp extends StatefulWidget {
@@ -216,64 +207,78 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Reconnect if disconnected when app comes to foreground
+      print('📱 [main] App resumed, checking socket connection...');
+      // ✅ Use SocketService directly instead of Provider to avoid context issues
+      // The context in didChangeAppLifecycleState is outside the Provider tree
       if (!SocketService.isConnected) {
-        print('📱 App resumed, reconnecting socket...');
-        SocketService.connect();
+        print(
+          '📱 [main] Socket disconnected, will reconnect via SocketProvider in HomeScreen...',
+        );
+        // SocketProvider will handle reconnection when HomeScreen resumes
+      } else {
+        print('✅ [main] Socket already connected');
+        print('   Socket ID: ${SocketService.currentSocketId}');
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Cerca Driver',
-      navigatorKey:
-          navigatorKey, // Global navigator key for background navigation
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
+        ChangeNotifierProvider(create: (_) => EarningsProvider()),
+        ChangeNotifierProvider(create: (_) => SocketProvider()..initialize()),
+      ],
+      child: MaterialApp(
+        title: 'Cerca Driver',
+        navigatorKey:
+            navigatorKey, // Global navigator key for background navigation
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        ),
+        initialRoute: '/login',
+        routes: {
+          '/login': (context) => const LoginScreen(),
+          '/home': (context) => const HomeScreen(),
+          '/main': (context) => const MainNavigationScreen(),
+          '/register': (context) => const RegisterScreen(),
+          '/rides': (context) => const RidesScreen(),
+          '/profile': (context) => const ProfileScreen(),
+          '/earnings': (context) => const EarningsScreen(),
+        },
+        onGenerateRoute: (settings) {
+          // Handle routes with arguments
+          if (settings.name == '/active-ride') {
+            final ride = settings.arguments as RideModel;
+            return MaterialPageRoute(
+              builder: (context) => ActiveRideScreen(ride: ride),
+            );
+          } else if (settings.name == '/document-upload') {
+            final driverId = settings.arguments as String;
+            return MaterialPageRoute(
+              builder: (context) => DocumentUploadScreen(driverId: driverId),
+            );
+          } else if (settings.name == '/edit-profile') {
+            final driver = settings.arguments as DriverModel;
+            return MaterialPageRoute(
+              builder: (context) => EditProfileScreen(driver: driver),
+            );
+          } else if (settings.name == '/vehicle-details') {
+            final driver = settings.arguments as DriverModel;
+            return MaterialPageRoute(
+              builder: (context) => VehicleDetailsScreen(driver: driver),
+            );
+          } else if (settings.name == '/documents') {
+            final driver = settings.arguments as DriverModel;
+            return MaterialPageRoute(
+              builder: (context) => DocumentsScreen(driver: driver),
+            );
+          }
+          return null;
+        },
+        debugShowCheckedModeBanner: false,
       ),
-      initialRoute: '/login',
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/home': (context) => const HomeScreen(),
-        '/main': (context) => const MainNavigationScreen(),
-        '/register': (context) => const RegisterScreen(),
-        '/rides': (context) => const RidesScreen(),
-        '/profile': (context) => const ProfileScreen(),
-        '/earnings': (context) => const EarningsScreen(),
-      },
-      onGenerateRoute: (settings) {
-        // Handle routes with arguments
-        if (settings.name == '/active-ride') {
-          final ride = settings.arguments as RideModel;
-          return MaterialPageRoute(
-            builder: (context) => ActiveRideScreen(ride: ride),
-          );
-        } else if (settings.name == '/document-upload') {
-          final driverId = settings.arguments as String;
-          return MaterialPageRoute(
-            builder: (context) => DocumentUploadScreen(driverId: driverId),
-          );
-        } else if (settings.name == '/edit-profile') {
-          final driver = settings.arguments as DriverModel;
-          return MaterialPageRoute(
-            builder: (context) => EditProfileScreen(driver: driver),
-          );
-        } else if (settings.name == '/vehicle-details') {
-          final driver = settings.arguments as DriverModel;
-          return MaterialPageRoute(
-            builder: (context) => VehicleDetailsScreen(driver: driver),
-          );
-        } else if (settings.name == '/documents') {
-          final driver = settings.arguments as DriverModel;
-          return MaterialPageRoute(
-            builder: (context) => DocumentsScreen(driver: driver),
-          );
-        }
-        return null;
-      },
-      debugShowCheckedModeBanner: false,
     );
   }
 }

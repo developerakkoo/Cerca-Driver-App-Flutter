@@ -20,7 +20,6 @@ class SocketService {
   static bool _isConnected = false;
   static String? _driverId;
   static String? _token;
-  static Timer? _testEventTimer;
   static Timer? _locationTimer;
   static String? _currentRideId;
   static final List<RideModel> _pendingRides = [];
@@ -52,6 +51,10 @@ class SocketService {
   // Overlay listener subscription (keep it alive)
   static StreamSubscription? _overlayListenerSubscription;
 
+  // Socket ID tracking and connection lock
+  static String? _currentSocketId;
+  static bool _isConnecting = false;
+
   /// Get connection status
   static bool get isConnected => _isConnected;
 
@@ -60,6 +63,24 @@ class SocketService {
 
   /// Get driver online status
   static bool get isDriverOnline => _isDriverOnline;
+
+  /// Get current socket ID
+  static String? get currentSocketId => _currentSocketId;
+
+  /// Get connection lock status
+  static bool get isConnecting => _isConnecting;
+
+  /// Print current socket state for debugging
+  static void printSocketState() {
+    print('🔍 [SocketService] Current Socket State:');
+    print('   Socket instance: ${_socket != null ? "exists" : "null"}');
+    print('   Socket ID: $_currentSocketId');
+    print('   Is connected: $_isConnected');
+    print('   Is connecting: $_isConnecting');
+    print('   Driver ID: $_driverId');
+    print('   Is initialized: $_isInitialized');
+    print('   Reconnect attempts: $_reconnectAttempts/$_maxReconnectAttempts');
+  }
 
   /// Set driver online status
   static void setDriverOnline(bool online) {
@@ -70,18 +91,25 @@ class SocketService {
     // Emit driverToggleStatus event to backend to sync isActive in database
     if (_socket != null && _isConnected && _driverId != null) {
       try {
+        print('📤 [SocketService] Emitting driverToggleStatus');
+        print('   Driver ID: $_driverId');
+        print('   Socket ID: $_currentSocketId');
+        print('   isActive: $online');
         _socket!.emit('driverToggleStatus', {
           'driverId': _driverId,
           'isActive': online,
         });
-        print('📤 Emitted driverToggleStatus to backend: isActive=$online');
+        print('✅ [SocketService] driverToggleStatus emitted successfully');
       } catch (e) {
-        print('❌ Error emitting driverToggleStatus: $e');
+        print('❌ [SocketService] Error emitting driverToggleStatus: $e');
+        print('   Socket ID: $_currentSocketId');
+        print('   Driver ID: $_driverId');
       }
     } else {
-      print('⚠️ Cannot emit driverToggleStatus:');
+      print('⚠️ [SocketService] Cannot emit driverToggleStatus:');
       print('   Socket: ${_socket != null ? "exists" : "null"}');
       print('   Connected: $_isConnected');
+      print('   Socket ID: $_currentSocketId');
       print('   Driver ID: ${_driverId ?? "null"}');
       print('   Status will be synced when socket connects');
     }
@@ -289,18 +317,77 @@ class SocketService {
 
   /// Connect to socket server
   static Future<bool> connect() async {
+    print('🔌 [SocketService] connect() called');
+    print('   Current socket ID: $_currentSocketId');
+    print('   Is connected: $_isConnected');
+    print('   Is connecting: $_isConnecting');
+    print('   Driver ID: $_driverId');
+
+    // Prevent concurrent connections
+    if (_isConnecting) {
+      print('⚠️ [SocketService] Connection already in progress, skipping...');
+      return false;
+    }
+
+    if (_isConnected && _socket != null) {
+      print('🔌 [SocketService] Socket already connected');
+      print('   Socket ID: $_currentSocketId');
+      return true;
+    }
+
+    if (_driverId == null || _token == null) {
+      print(
+        'ℹ️ [SocketService] Cannot connect: Driver not logged in (credentials missing)',
+      );
+      print('   Driver ID: $_driverId');
+      print('   Token: ${_token != null ? "exists" : "null"}');
+      return false;
+    }
+
+    _isConnecting = true;
+
     try {
-      if (_isConnected) {
-        print('🔌 Socket already connected');
-        return true;
+      // Clean up old socket first
+      if (_socket != null) {
+        print(
+          '🧹 [SocketService] Cleaning up old socket before new connection...',
+        );
+        final oldSocketId = _socket!.id;
+        print('   Old socket ID: $oldSocketId');
+        print('   Old socket connected: $_isConnected');
+
+        // Emit disconnect to backend if connected
+        if (_isConnected && _driverId != null) {
+          try {
+            print(
+              '📤 [SocketService] Emitting driverDisconnect for old socket',
+            );
+            print('   Driver ID: $_driverId');
+            print('   Old socket ID: $oldSocketId');
+            _socket!.emit('driverDisconnect', {'driverId': _driverId});
+            print('✅ [SocketService] driverDisconnect emitted');
+          } catch (e) {
+            print('⚠️ [SocketService] Error emitting disconnect: $e');
+          }
+        }
+
+        // Dispose old socket
+        try {
+          _socket!.disconnect();
+          _socket!.dispose();
+          print('✅ [SocketService] Old socket disposed');
+        } catch (e) {
+          print('⚠️ [SocketService] Error disposing old socket: $e');
+        }
+
+        _socket = null;
+        _isConnected = false;
+        _currentSocketId = null;
       }
 
-      if (_driverId == null || _token == null) {
-        print('ℹ️ Cannot connect: Driver not logged in (credentials missing)');
-        return false;
-      }
-
-      print('🔌 Connecting to socket server: ${ApiConstants.baseUrl}');
+      print('🔌 [SocketService] Creating new socket connection');
+      print('   URL: ${ApiConstants.baseUrl}');
+      print('   Driver ID: $_driverId');
 
       // Configure for production HTTPS
       _socket = IO.io(
@@ -318,36 +405,51 @@ class SocketService {
             .build(),
       );
 
+      print('✅ [SocketService] Socket instance created');
+      print('   Socket ID (before connect): ${_socket!.id}');
+
       // Set up event listeners
       _setupEventListeners();
 
       // Connect to server
-      print('🔌 Attempting to connect...');
+      print('🔌 [SocketService] Attempting to connect...');
       print('   URL: ${ApiConstants.baseUrl}');
       print('   Transport: polling → websocket (auto upgrade)');
       print(
         '   Protocol: ${ApiConstants.baseUrl.startsWith('https') ? 'HTTPS/WSS (secure)' : 'HTTP/WS (non-secure)'}',
       );
       print('   Auth: Driver ID = $_driverId');
-      print('   Reconnection: enabled (5 attempts, 1s delay)');
+      print('   Reconnection: enabled (10 attempts, 2s delay)');
 
       _socket!.connect();
-      print('✅ connect() method called, waiting for onConnect event...');
+      print(
+        '✅ [SocketService] connect() method called, waiting for onConnect event...',
+      );
 
       // Wait for connection with timeout
-      print('⏳ Waiting for connection...');
+      print('⏳ [SocketService] Waiting for connection...');
       await _waitForConnection();
 
       if (_isConnected) {
-        print('✅ Connection established successfully');
+        print('✅ [SocketService] Connection established successfully');
+        print('   Socket ID: $_currentSocketId');
+        print('   Driver ID: $_driverId');
       } else {
-        print('❌ Connection failed after timeout');
+        print('❌ [SocketService] Connection failed after timeout');
+        print('   Socket ID: $_currentSocketId');
       }
 
       return _isConnected;
     } catch (e) {
-      print('❌ Error connecting to socket: $e');
+      print('❌ [SocketService] Error connecting to socket: $e');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      _isConnected = false;
+      _currentSocketId = null;
       return false;
+    } finally {
+      _isConnecting = false;
+      print('🔓 [SocketService] Connection lock released');
     }
   }
 
@@ -357,11 +459,18 @@ class SocketService {
 
     // Connection events
     _socket!.onConnect((_) {
-      print('✅ Socket connected successfully');
       _isConnected = true;
+      _currentSocketId = _socket!.id;
+      print('✅ [SocketService] Socket connected successfully');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      print('   Socket instance: ${_socket != null ? "exists" : "null"}');
+
       _reconnectAttempts =
           0; // Reset reconnect attempts on successful connection
       _reconnectTimer?.cancel();
+      print('🔄 [SocketService] Reconnect attempts reset to 0');
+
       _emitDriverConnect();
 
       // ✅ Sync driver status with backend after connection
@@ -370,50 +479,67 @@ class SocketService {
       Future.delayed(const Duration(milliseconds: 500), () {
         if (_isDriverOnline && _driverId != null && _isConnected) {
           print(
-            '🔄 Syncing driver status with backend: isActive=$_isDriverOnline',
+            '🔄 [SocketService] Syncing driver status with backend: isActive=$_isDriverOnline',
           );
+          print('   Socket ID: $_currentSocketId');
+          print('   Driver ID: $_driverId');
           try {
             _socket!.emit('driverToggleStatus', {
               'driverId': _driverId,
               'isActive': _isDriverOnline,
             });
             print(
-              '📤 Emitted driverToggleStatus to sync status: isActive=$_isDriverOnline',
+              '📤 [SocketService] Emitted driverToggleStatus to sync status: isActive=$_isDriverOnline',
             );
+            print('   Socket ID: $_currentSocketId');
           } catch (e) {
-            print('❌ Error syncing driver status on connect: $e');
+            print(
+              '❌ [SocketService] Error syncing driver status on connect: $e',
+            );
+            print('   Socket ID: $_currentSocketId');
           }
         }
       });
 
       if (onConnectionStatusChanged != null) {
         onConnectionStatusChanged!(true);
+        print('📢 [SocketService] Connection status callback triggered: true');
       }
     });
 
     _socket!.onDisconnect((_) {
-      print('❌ Socket disconnected');
+      final disconnectedSocketId = _currentSocketId;
+      print('❌ [SocketService] Socket disconnected');
+      print('   Disconnected socket ID: $disconnectedSocketId');
+      print('   Driver ID: $_driverId');
       _isConnected = false;
+      _currentSocketId = null;
       if (onConnectionStatusChanged != null) {
         onConnectionStatusChanged!(false);
+        print('📢 [SocketService] Connection status callback triggered: false');
       }
       // Attempt to reconnect
+      print('🔄 [SocketService] Attempting to reconnect...');
       _attemptReconnect();
     });
 
     _socket!.onConnectError((error) {
-      print('❌ Socket connection error: $error');
+      print('❌ [SocketService] Socket connection error: $error');
       print('   Error type: ${error.runtimeType}');
       print('   URL: ${ApiConstants.baseUrl}');
       print('   Driver ID: $_driverId');
+      print('   Current socket ID: $_currentSocketId');
       print('   Transports: polling, websocket');
       _isConnected = false;
+      _currentSocketId = null;
     });
 
     _socket!.onError((error) {
-      print('❌ Socket error: $error');
+      print('❌ [SocketService] Socket error: $error');
       print('   Error type: ${error.runtimeType}');
       print('   URL: ${ApiConstants.baseUrl}');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
       if (error.toString().contains('timeout')) {
         print('   ⏰ This is a TIMEOUT error');
         print('   Possible causes:');
@@ -426,12 +552,18 @@ class SocketService {
 
     // Custom events
     _socket!.on('rideRequest', (data) {
-      print('🚗 Received ride request: $data');
+      print('🚗 [SocketService] Received rideRequest event');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      print('   Data: $data');
       _handleRideRequest(data);
     });
 
     _socket!.on('newRideRequest', (data) {
-      print('🚗 Received new ride request: $data');
+      print('🚗 [SocketService] Received newRideRequest event');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      print('   Data: $data');
       _handleNewRideRequest(data);
     });
 
@@ -441,8 +573,33 @@ class SocketService {
     });
 
     _socket!.on('driverStatusUpdate', (data) {
-      print('📊 Driver status update: $data');
+      print('📊 [SocketService] Received driverStatusUpdate event');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      print('   Data: $data');
+      // Verify socket ID if backend sends it
+      if (data is Map && data['socketId'] != null) {
+        final backendSocketId = data['socketId'];
+        if (backendSocketId != _currentSocketId) {
+          print('⚠️ [SocketService] WARNING: Socket ID mismatch!');
+          print('   Client socket ID: $_currentSocketId');
+          print('   Backend socket ID: $backendSocketId');
+        } else {
+          print('✅ [SocketService] Socket ID verified: matches backend');
+        }
+      }
       _handleDriverStatusUpdate(data);
+    });
+
+    // Listen for driverConnected event (broadcast from backend)
+    _socket!.on('driverConnected', (data) {
+      print(
+        '✅ [SocketService] Received driverConnected event (backend broadcast)',
+      );
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+      print('   Data: $data');
+      // Backend broadcasts this after storing socketId in database
     });
 
     _socket!.on('serverMessage', (data) {
@@ -571,13 +728,27 @@ class SocketService {
 
   /// Emit driver connect event
   static void _emitDriverConnect() {
-    if (_socket == null || !_isConnected || _driverId == null) return;
+    if (_socket == null || !_isConnected || _driverId == null) {
+      print('⚠️ [SocketService] Cannot emit driverConnect:');
+      print('   Socket: ${_socket != null ? "exists" : "null"}');
+      print('   Connected: $_isConnected');
+      print('   Driver ID: ${_driverId ?? "null"}');
+      return;
+    }
 
     try {
+      final socketId = _socket!.id;
+      _currentSocketId = socketId;
+      print('📤 [SocketService] Emitting driverConnect event');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $socketId');
+      print('   Expected backend to store socket ID: $socketId');
       _socket!.emit('driverConnect', {'driverId': _driverId});
-      print('📤 Emitted driverConnect event');
+      print('✅ [SocketService] driverConnect event emitted successfully');
     } catch (e) {
-      print('❌ Error emitting driverConnect: $e');
+      print('❌ [SocketService] Error emitting driverConnect: $e');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
     }
   }
 
@@ -598,10 +769,14 @@ class SocketService {
         },
       };
 
-      _socket!.emit('driverLocationUpdate', locationData);
       print(
-        '📍 Location sent once on connection: ${position.latitude}, ${position.longitude}',
+        '📤 [SocketService] Emitting driverLocationUpdate (once on connection)',
       );
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
+      print('   Location: ${position.latitude}, ${position.longitude}');
+      _socket!.emit('driverLocationUpdate', locationData);
+      print('✅ [SocketService] driverLocationUpdate emitted successfully');
     } catch (e) {
       print('❌ Error emitting location once: $e');
     }
@@ -678,8 +853,13 @@ class SocketService {
         locationData['rideId'] = _currentRideId;
       }
 
+      print('📤 [SocketService] Emitting driverLocationUpdate (periodic)');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
+      print('   Ride ID: ${_currentRideId ?? "none"}');
+      print('   Location: ${position.latitude}, ${position.longitude}');
       _socket!.emit('driverLocationUpdate', locationData);
-      print('📍 Location updated: ${position.latitude}, ${position.longitude}');
+      print('✅ [SocketService] driverLocationUpdate emitted successfully');
     } catch (e) {
       print('❌ Error updating location: $e');
     }
@@ -687,62 +867,29 @@ class SocketService {
 
   /// Emit driver disconnect event
   static void emitDriverDisconnect() {
-    if (_socket == null || !_isConnected || _driverId == null) return;
+    if (_socket == null || !_isConnected || _driverId == null) {
+      print('⚠️ [SocketService] Cannot emit driverDisconnect:');
+      print('   Socket: ${_socket != null ? "exists" : "null"}');
+      print('   Connected: $_isConnected');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: ${_driverId ?? "null"}');
+      return;
+    }
 
     try {
+      print('📤 [SocketService] Emitting driverDisconnect event');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
       _socket!.emit('driverDisconnect', {
         'driverId': _driverId,
         'status': 'offline',
         'timestamp': DateTime.now().toIso8601String(),
       });
-      print('📤 Emitted driverDisconnect event');
+      print('✅ [SocketService] driverDisconnect event emitted successfully');
     } catch (e) {
-      print('❌ Error emitting driverDisconnect: $e');
-    }
-  }
-
-  /// Start emitting test events
-  static void startTestEvents() {
-    try {
-      print('🧪 Starting test events...');
-
-      // Emit initial test event
-      _emitTestEvent();
-
-      // Start timer for continuous test events every 5 seconds
-      _testEventTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-        _emitTestEvent();
-      });
-    } catch (e) {
-      print('❌ Error starting test events: $e');
-    }
-  }
-
-  /// Stop emitting test events
-  static void stopTestEvents() {
-    try {
-      _testEventTimer?.cancel();
-      _testEventTimer = null;
-      print('🧪 Test events stopped');
-    } catch (e) {
-      print('❌ Error stopping test events: $e');
-    }
-  }
-
-  /// Emit test event
-  static void _emitTestEvent() {
-    if (_socket == null || !_isConnected || _driverId == null) return;
-
-    try {
-      _socket!.emit('test', {
-        'driverId': _driverId,
-        'message': 'Test event from driver app',
-        'timestamp': DateTime.now().toIso8601String(),
-        'data': 'This is a test string for background socket testing',
-      });
-      print('📤 Emitted test event');
-    } catch (e) {
-      print('❌ Error emitting test event: $e');
+      print('❌ [SocketService] Error emitting driverDisconnect: $e');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
     }
   }
 
@@ -818,8 +965,12 @@ class SocketService {
       print('   Socket connected: $_isConnected');
       print('   Full data: $eventData');
 
+      print('📤 [SocketService] Emitting rideAccepted event');
+      print('   Ride ID: $rideId');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
       _socket!.emit('rideAccepted', eventData);
-      print('✅ Emitted rideAccepted event for ride: $rideId');
+      print('✅ [SocketService] rideAccepted event emitted successfully');
 
       // Remove from pending rides
       _pendingRides.removeWhere((r) => r.id == rideId);
@@ -852,8 +1003,12 @@ class SocketService {
       print('   Socket connected: $_isConnected');
       print('   Full data: $eventData');
 
+      print('📤 [SocketService] Emitting rideRejected event');
+      print('   Ride ID: $rideId');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
       _socket!.emit('rideRejected', eventData);
-      print('✅ Emitted rideRejected event for ride: $rideId');
+      print('✅ [SocketService] rideRejected event emitted successfully');
 
       // Remove from pending rides
       _pendingRides.removeWhere((r) => r.id == rideId);
@@ -886,9 +1041,12 @@ class SocketService {
     }
 
     try {
-      _socket!.emit('driverArrived', {'rideId': rideId});
-      print('✅ Emitted driverArrived event');
+      print('📤 [SocketService] Emitting driverArrived event');
       print('   Ride ID: $rideId');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
+      _socket!.emit('driverArrived', {'rideId': rideId});
+      print('✅ [SocketService] driverArrived event emitted successfully');
     } catch (e) {
       print('❌ Error emitting driverArrived: $e');
     }
@@ -1079,20 +1237,36 @@ class SocketService {
 
   /// Disconnect from socket
   static Future<void> disconnect() async {
+    print('🔌 [SocketService] disconnect() called');
+    print('   Current socket ID: $_currentSocketId');
+    print('   Is connected: $_isConnected');
+    print('   Driver ID: $_driverId');
+
     try {
       if (_socket != null && _isConnected) {
+        final socketId = _currentSocketId;
+        print(
+          '📤 [SocketService] Emitting driverDisconnect before disconnecting',
+        );
         emitDriverDisconnect();
-        stopTestEvents();
         stopLocationUpdates();
         clearPendingRides();
         _socket!.disconnect();
         _socket!.dispose();
         _socket = null;
         _isConnected = false;
-        print('🔌 Socket disconnected');
+        _currentSocketId = null;
+        print('✅ [SocketService] Socket disconnected and disposed');
+        print('   Disconnected socket ID was: $socketId');
+      } else {
+        print('ℹ️ [SocketService] No active socket to disconnect');
+        print(
+          '   Socket: ${_socket != null ? "exists but not connected" : "null"}',
+        );
       }
     } catch (e) {
-      print('❌ Error disconnecting socket: $e');
+      print('❌ [SocketService] Error disconnecting socket: $e');
+      print('   Socket ID: $_currentSocketId');
     }
   }
 
@@ -1160,13 +1334,38 @@ class SocketService {
         // DON'T show overlay - user can see the list
       } else {
         // App is in BACKGROUND or HomeScreen is not active
-        print('🌙 App in background or HomeScreen inactive - showing overlay');
-        try {
-          _showRideRequestOverlay(ride); // Show overlay
-          print('✅ Overlay display triggered');
-        } catch (e) {
-          print('❌ Error showing overlay: $e');
-        }
+        // TODO: Overlay showing logic commented out - working with list only for now
+        // print('🌙 App in background or HomeScreen inactive - showing overlay');
+        // try {
+        //   _showRideRequestOverlay(ride); // Show overlay
+        //   print('✅ Overlay display triggered');
+        // } catch (e) {
+        //   print('❌ Error showing overlay: $e');
+        // }
+
+        print(
+          '🌙 App in background or HomeScreen inactive - ride added to pending list',
+        );
+        print(
+          '   Ride will appear in list when app resumes or callback becomes available',
+        );
+
+        // ✅ Update UI list if callback becomes available
+        // This handles the case where callback was null at check time
+        // but gets registered while ride is pending (e.g., user opens app)
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (onRidesUpdated != null) {
+            print('📱 Callback available - updating UI list with pending ride');
+            try {
+              onRidesUpdated!(_pendingRides);
+              print('✅ UI list updated successfully');
+            } catch (e) {
+              print('❌ Error updating UI list: $e');
+            }
+          } else {
+            print('ℹ️ Callback still null - UI will sync on resume');
+          }
+        });
       }
     } catch (e) {
       print('❌ Error handling new ride request: $e');
@@ -1520,6 +1719,7 @@ class SocketService {
   }
 
   /// Show ride request overlay with ride data
+  /// TODO: Currently commented out - working with list only for now
   static void _showRideRequestOverlay(RideModel? ride) {
     try {
       print(
@@ -1543,6 +1743,7 @@ class SocketService {
   }
 
   /// Show overlay directly from background service
+  /// TODO: Currently commented out - working with list only for now
   static void _showOverlayFromBackground() async {
     try {
       print('📱 Showing overlay directly from background service...');
@@ -1708,7 +1909,11 @@ class SocketService {
   /// Attempt to reconnect with exponential backoff
   static void _attemptReconnect() {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print('❌ Max reconnect attempts reached. Please restart the app.');
+      print(
+        '❌ [SocketService] Max reconnect attempts reached. Please restart the app.',
+      );
+      print('   Attempts: $_reconnectAttempts/$_maxReconnectAttempts');
+      print('   Last socket ID: $_currentSocketId');
       return;
     }
 
@@ -1718,12 +1923,15 @@ class SocketService {
     ); // Exponential backoff
 
     print(
-      '🔄 Attempting to reconnect in ${delay.inSeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)',
+      '🔄 [SocketService] Attempting to reconnect in ${delay.inSeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)',
     );
+    print('   Last socket ID: $_currentSocketId');
+    print('   Driver ID: $_driverId');
 
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () async {
-      print('🔌 Reconnecting to socket...');
+      print('🔌 [SocketService] Reconnecting to socket...');
+      print('   Reconnect attempt: $_reconnectAttempts/$_maxReconnectAttempts');
       await connect();
     });
   }
@@ -1737,39 +1945,58 @@ class SocketService {
 
   /// Complete disposal of socket service
   static Future<void> dispose() async {
-    print('🧹 Disposing socket service completely...');
+    print('🧹 [SocketService] Disposing socket service completely...');
+    print('   Current socket ID: $_currentSocketId');
+    print('   Is connected: $_isConnected');
+    print('   Driver ID: $_driverId');
 
     // Stop all timers
     _reconnectTimer?.cancel();
     _locationTimer?.cancel();
     stopLocationUpdates();
-    stopTestEvents();
+    print('✅ [SocketService] All timers stopped');
 
     // Cancel overlay listener subscription
     await _overlayListenerSubscription?.cancel();
     _overlayListenerSubscription = null;
+    print('✅ [SocketService] Overlay listener subscription cancelled');
 
     // Disconnect socket
     if (_socket != null) {
+      final socketId = _currentSocketId;
+      if (_isConnected && _driverId != null) {
+        try {
+          print('📤 [SocketService] Emitting driverDisconnect before disposal');
+          _socket!.emit('driverDisconnect', {'driverId': _driverId});
+        } catch (e) {
+          print('⚠️ [SocketService] Error emitting disconnect: $e');
+        }
+      }
       _socket!.disconnect();
       _socket!.dispose();
       _socket = null;
+      print('✅ [SocketService] Socket disconnected and disposed');
+      print('   Disposed socket ID was: $socketId');
     }
 
     // Clear all state
     _isConnected = false;
     _isInitialized = false;
+    _isConnecting = false;
     _reconnectAttempts = 0;
     _currentRideId = null;
+    _currentSocketId = null;
     _pendingRides.clear();
     _acceptedRideForNavigation = null;
+    print('✅ [SocketService] All state cleared');
 
     // Clear callbacks
     onRidesUpdated = null;
     onRideAccepted = null;
     onMessageReceived = null;
     onConnectionStatusChanged = null;
+    print('✅ [SocketService] All callbacks cleared');
 
-    print('✅ Socket service disposed');
+    print('✅ [SocketService] Socket service disposed completely');
   }
 }

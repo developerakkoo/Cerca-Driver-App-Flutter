@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:driver_cerca/models/earnings_model.dart';
 import 'package:driver_cerca/models/ride_model.dart';
-import 'package:driver_cerca/services/earnings_service.dart';
+import 'package:driver_cerca/providers/earnings_provider.dart';
 import 'package:driver_cerca/services/ride_service.dart';
 import 'package:driver_cerca/services/storage_service.dart';
+import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
 /// EarningsScreen displays driver earnings with filters and statistics
@@ -16,10 +17,7 @@ class EarningsScreen extends StatefulWidget {
 
 class _EarningsScreenState extends State<EarningsScreen> {
   String? _driverId;
-  EarningsModel? _earnings;
-  DriverStats? _stats;
   List<RideModel> _completedRides = [];
-  bool _isLoading = false;
   DateRangeFilter _selectedFilter = DateRangeFilter.month;
   DateTime? _customStartDate;
   DateTime? _customEndDate;
@@ -40,24 +38,37 @@ class _EarningsScreenState extends State<EarningsScreen> {
   Future<void> _loadData() async {
     if (_driverId == null) return;
 
-    setState(() => _isLoading = true);
-    try {
-      final dates = _getDateRange();
+    final earningsProvider =
+        Provider.of<EarningsProvider>(context, listen: false);
+    final dates = _getDateRange();
 
-      final results = await Future.wait([
-        EarningsService.getDriverEarnings(
+    try {
+      await Future.wait([
+        earningsProvider.fetchEarnings(
           driverId: _driverId!,
           startDate: dates['start'],
           endDate: dates['end'],
         ),
-        EarningsService.getDriverStats(_driverId!),
-        RideService.getCompletedRides(_driverId!),
+        earningsProvider.fetchStats(_driverId!),
+        _loadCompletedRides(),
       ]);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('❌ Error loading data: $e')));
+      }
+    }
+  }
+
+  Future<void> _loadCompletedRides() async {
+    if (_driverId == null) return;
+    try {
+      final rides = await RideService.getCompletedRides(_driverId!);
+      final dates = _getDateRange();
 
       setState(() {
-        _earnings = results[0] as EarningsModel;
-        _stats = results[1] as DriverStats;
-        _completedRides = results[2] as List<RideModel>;
+        _completedRides = rides;
 
         // Filter rides by date range
         if (dates['start'] != null || dates['end'] != null) {
@@ -74,13 +85,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
         }
       });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('❌ Error loading data: $e')));
-      }
-    } finally {
-      setState(() => _isLoading = false);
+      print('Error loading completed rides: $e');
     }
   }
 
@@ -139,30 +144,40 @@ class _EarningsScreenState extends State<EarningsScreen> {
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Date range filter
-                    _buildDateRangeFilter(),
+      body: Consumer<EarningsProvider>(
+        builder: (context, earningsProvider, _) {
+          final _earnings = earningsProvider.earnings;
+          final _stats = earningsProvider.stats;
+          final _isLoading = earningsProvider.isLoading;
 
-                    // Earnings summary card
-                    if (_earnings != null) _buildEarningsSummaryCard(),
+          if (_isLoading && _earnings == null && _stats == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-                    // Statistics cards
-                    if (_stats != null) _buildStatsCards(),
+          return RefreshIndicator(
+            onRefresh: _loadData,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Date range filter
+                  _buildDateRangeFilter(),
 
-                    // Ride history
-                    _buildRideHistory(),
-                  ],
-                ),
+                  // Earnings summary card
+                  if (_earnings != null) _buildEarningsSummaryCard(_earnings),
+
+                  // Statistics cards
+                  if (_stats != null) _buildStatsCards(_stats),
+
+                  // Ride history
+                  _buildRideHistory(),
+                ],
               ),
             ),
+          );
+        },
+      ),
     );
   }
 
@@ -223,7 +238,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
     );
   }
 
-  Widget _buildEarningsSummaryCard() {
+  Widget _buildEarningsSummaryCard(EarningsModel earnings) {
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(20),
@@ -255,7 +270,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '₹${_earnings!.netEarnings.toStringAsFixed(2)}',
+            '₹${earnings.netEarnings.toStringAsFixed(2)}',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 40,
@@ -269,13 +284,13 @@ class _EarningsScreenState extends State<EarningsScreen> {
               Expanded(
                 child: _buildEarningDetail(
                   'Gross',
-                  '₹${_earnings!.grossEarnings.toStringAsFixed(2)}',
+                  '₹${earnings.grossEarnings.toStringAsFixed(2)}',
                 ),
               ),
               Expanded(
                 child: _buildEarningDetail(
                   'Platform Fee',
-                  '₹${_earnings!.platformFees.toStringAsFixed(2)}',
+                  '₹${earnings.platformFees.toStringAsFixed(2)}',
                 ),
               ),
             ],
@@ -286,13 +301,13 @@ class _EarningsScreenState extends State<EarningsScreen> {
               Expanded(
                 child: _buildEarningDetail(
                   'Total Rides',
-                  '${_earnings!.totalRides}',
+                  '${earnings.totalRides}',
                 ),
               ),
               Expanded(
                 child: _buildEarningDetail(
                   'Avg per Ride',
-                  '₹${_earnings!.averagePerRide.toStringAsFixed(2)}',
+                  '₹${earnings.averagePerRide.toStringAsFixed(2)}',
                 ),
               ),
             ],
@@ -323,7 +338,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
     );
   }
 
-  Widget _buildStatsCards() {
+  Widget _buildStatsCards(DriverStats stats) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -340,7 +355,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
                 child: _buildStatCard(
                   icon: Icons.check_circle,
                   label: 'Completion Rate',
-                  value: '${_stats!.completionRate.toStringAsFixed(1)}%',
+                  value: '${stats.completionRate.toStringAsFixed(1)}%',
                   color: Colors.green,
                 ),
               ),
@@ -349,7 +364,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
                 child: _buildStatCard(
                   icon: Icons.star,
                   label: 'Average Rating',
-                  value: _stats!.averageRating.toStringAsFixed(1),
+                  value: stats.averageRating.toStringAsFixed(1),
                   color: Colors.amber,
                 ),
               ),
@@ -362,7 +377,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
                 child: _buildStatCard(
                   icon: Icons.directions_car,
                   label: 'Total Rides',
-                  value: '${_stats!.totalRides}',
+                  value: '${stats.totalRides}',
                   color: Colors.indigo,
                 ),
               ),
@@ -371,7 +386,7 @@ class _EarningsScreenState extends State<EarningsScreen> {
                 child: _buildStatCard(
                   icon: Icons.cancel,
                   label: 'Cancelled',
-                  value: '${_stats!.cancelledRides}',
+                  value: '${stats.cancelledRides}',
                   color: Colors.red,
                 ),
               ),
