@@ -1175,8 +1175,60 @@ class SocketService {
 
   static void _handleRideCancelled(dynamic data) {
     print('❌ Ride cancelled: $data');
-    // Stop location updates when ride is cancelled
-    stopLocationUpdates();
+
+    try {
+      // Parse ride ID from data (can be ride object or just ID)
+      String? rideId;
+      if (data is Map) {
+        rideId = data['_id'] ?? data['id'] ?? data['rideId'];
+      } else if (data is String) {
+        rideId = data;
+      }
+
+      if (rideId == null || rideId.isEmpty) {
+        print('⚠️ Cannot handle ride cancellation: rideId not found in data');
+        return;
+      }
+
+      print('🗑️ Processing ride cancellation: $rideId');
+
+      // Remove from pending rides list
+      final countBefore = _pendingRides.length;
+      _pendingRides.removeWhere((r) => r.id == rideId);
+      final countAfter = _pendingRides.length;
+      if (countBefore > countAfter) {
+        print(
+          '✅ Removed cancelled ride from pending list. Remaining: $countAfter',
+        );
+      } else {
+        print(
+          'ℹ️ Ride $rideId not found in pending list (may have been removed already)',
+        );
+      }
+
+      // Check if overlay is showing this ride and close it
+      if (_currentRideDetails != null &&
+          _currentRideDetails!['rideId'] == rideId) {
+        print('📱 Closing overlay for cancelled ride: $rideId');
+        OverlayService.closeOverlay();
+        clearPendingRideRequest();
+      }
+
+      // Update UI if callback is available
+      if (onRidesUpdated != null) {
+        onRidesUpdated!(_pendingRides);
+        print('✅ Notified UI of cancellation');
+      }
+
+      // Stop location updates when ride is cancelled
+      stopLocationUpdates();
+
+      print('✅ Ride cancellation handled successfully');
+    } catch (e) {
+      print('❌ Error handling ride cancellation: $e');
+      // Still stop location updates even if other cleanup fails
+      stopLocationUpdates();
+    }
   }
 
   static void _handleDriverStatusUpdate(dynamic data) {
