@@ -51,16 +51,39 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   }
 
   void _setupRideStatusListener() {
-    print('🎧 Setting up ride status listener for ride: ${_ride.id}');
+    print('🎧 [ActiveRideScreen] Setting up ride status listener for ride: ${_ride.id}');
+    print('   Current status: ${_ride.status.displayName}');
+
+    // Listen for rideAssigned event (sent when ride is first accepted)
+    SocketService.onRideAssigned = (assignedRide) {
+      print('🔔 [ActiveRideScreen] rideAssigned event received');
+      print('   Assigned Ride ID: ${assignedRide.id}');
+      print('   Current Ride ID: ${_ride.id}');
+      print('   Assigned Status: ${assignedRide.status.displayName}');
+      print('   Mounted: $mounted');
+
+      if (assignedRide.id == _ride.id && mounted) {
+        print('   ✅ Updating ride from rideAssigned event...');
+        setState(() {
+          _ride = assignedRide;
+        });
+        print(
+          '   ✅ Ride updated in UI: ${assignedRide.status.displayName}',
+        );
+      } else {
+        print('   ⚠️ Skipping update - ID mismatch or not mounted');
+      }
+    };
 
     // Listen for ride status updates from socket
     SocketService.onRideStatusUpdated = (updatedRide) {
-      print('🔔 Ride status update received');
+      print('🔔 [ActiveRideScreen] Ride status update received');
       print('   Updated Ride ID: ${updatedRide.id}');
       print('   Current Ride ID: ${_ride.id}');
       print('   Match: ${updatedRide.id == _ride.id}');
       print('   Mounted: $mounted');
       print('   New Status: ${updatedRide.status.displayName}');
+      print('   Current Status: ${_ride.status.displayName}');
 
       if (updatedRide.id == _ride.id && mounted) {
         print('   ✅ Updating ride state...');
@@ -128,6 +151,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   void dispose() {
     _locationSubscription?.cancel();
     _mapController?.dispose();
+    SocketService.onRideAssigned = null; // Clear callback
     SocketService.onRideStatusUpdated = null; // Clear callback
     SocketService.onOtpVerifiedForCompletion = null; // Clear callback
     SocketService.onOtpVerificationFailed = null; // Clear callback
@@ -350,11 +374,23 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         updatedAt: DateTime.now(),
       );
 
+      print('✅ [ActiveRideScreen] Updating ride status...');
+      print('   Old status: ${_ride.status.displayName}');
+      print('   New status: ${updatedRide.status.displayName}');
+      
       setState(() {
         _ride = updatedRide;
+        _isLoading = false; // Stop loading immediately
       });
 
-      print('✅ Updated local ride status to: ${_ride.status.displayName}');
+      print('✅ [ActiveRideScreen] Status updated successfully');
+      print('   Current ride status: ${_ride.status.displayName}');
+      print('   UI should rebuild and show appropriate button');
+      
+      // Verify the state change
+      if (_ride.status == RideStatus.arrived) {
+        print('   ✅ Status is now "arrived" - "Start Ride" button should be visible');
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(
@@ -850,9 +886,6 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
             _buildDetailRow('Payment', _ride.paymentMethod.displayName),
             const Divider(),
             _buildDetailRow('Ride Type', _ride.rideType.displayName),
-            const Divider(),
-            _buildDetailRow('Start OTP', _ride.startOtp),
-            _buildDetailRow('Stop OTP', _ride.stopOtp),
           ],
         ),
       ),

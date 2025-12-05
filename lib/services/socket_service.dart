@@ -32,6 +32,7 @@ class SocketService {
   // Callbacks for UI updates
   static Function(List<RideModel>)? onRidesUpdated;
   static Function(RideModel)? onRideAccepted;
+  static Function(RideModel)? onRideAssigned; // For rideAssigned event
   static Function(RideModel)?
   onRideStatusUpdated; // For individual ride status changes
   static Function(String rideId, String otp)?
@@ -1466,18 +1467,33 @@ class SocketService {
   }
 
   static void _handleRideAssigned(dynamic data) {
-    print('✅ Ride successfully assigned to driver');
+    print('✅ [SocketService] Ride successfully assigned to driver');
+    print('   Socket ID: $_currentSocketId');
+    print('   Driver ID: $_driverId');
     try {
       final ride = RideModel.fromJson(data);
-      print('🚗 Ride ID: ${ride.id}');
-      print('🎯 Pickup: ${ride.pickupAddress}');
-      print('📍 Dropoff: ${ride.dropoffAddress}');
+      print('🚗 [SocketService] Ride ID: ${ride.id}');
+      print('🎯 [SocketService] Pickup: ${ride.pickupAddress}');
+      print('📍 [SocketService] Dropoff: ${ride.dropoffAddress}');
+      print('📊 [SocketService] Status: ${ride.status.displayName}');
 
-      // TODO: Navigate to ActiveRideScreen
-      // TODO: Start location updates with rideId
+      // Trigger onRideAssigned callback if set
+      if (onRideAssigned != null) {
+        print('📢 [SocketService] Triggering onRideAssigned callback');
+        onRideAssigned!(ride);
+      }
+
+      // Also trigger onRideStatusUpdated to update any active ride screens
+      if (onRideStatusUpdated != null) {
+        print('📢 [SocketService] Triggering onRideStatusUpdated callback');
+        onRideStatusUpdated!(ride);
+      }
+
+      // Start location updates with rideId
       startLocationUpdates(rideId: ride.id);
+      print('✅ [SocketService] Location updates started for ride: ${ride.id}');
     } catch (e) {
-      print('❌ Error parsing assigned ride: $e');
+      print('❌ [SocketService] Error parsing assigned ride: $e');
     }
   }
 
@@ -1993,6 +2009,10 @@ class SocketService {
     // Clear callbacks
     onRidesUpdated = null;
     onRideAccepted = null;
+    onRideAssigned = null;
+    onRideStatusUpdated = null;
+    onOtpVerifiedForCompletion = null;
+    onOtpVerificationFailed = null;
     onMessageReceived = null;
     onConnectionStatusChanged = null;
     print('✅ [SocketService] All callbacks cleared');
