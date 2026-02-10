@@ -3,6 +3,7 @@ import 'package:driver_cerca/constants/api_constants.dart';
 import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/services/app_launcher_service.dart';
+import 'package:driver_cerca/services/audio_service.dart';
 import 'package:driver_cerca/main.dart';
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/models/message_model.dart';
@@ -39,7 +40,13 @@ class SocketService {
   onOtpVerifiedForCompletion; // For stop OTP
   static Function(String message)? onOtpVerificationFailed; // For OTP errors
   static Function(MessageModel)? onMessageReceived;
+  static Function(List<MessageModel>)? onRideMessages;
+  static Function(Map<String, dynamic>)? onUnreadCountUpdated;
   static Function(bool)? onConnectionStatusChanged;
+  static Function(String rideId, String reason, String cancelledBy)? onRideCancelled; // For ride cancellation
+  static Function(Map<String, dynamic>)? onDriverEarningAdded;
+  static Function(String? rideId, double? amount, String? paymentId, Map<String, dynamic> data)? onPaymentCompleted;
+  static Function(String? rideId, String? reason)? onPaymentFailed;
 
   // Reconnection variables
   static int _reconnectAttempts = 0;
@@ -55,6 +62,13 @@ class SocketService {
   // Socket ID tracking and connection lock
   static String? _currentSocketId;
   static bool _isConnecting = false;
+  
+  // Track if listeners are registered to prevent duplicates
+  static bool _listenersRegistered = false;
+  
+  // Track recently processed ride IDs to prevent duplicate processing
+  static final Set<String> _recentlyProcessedRides = {};
+  static Timer? _recentRidesCleanupTimer;
 
   /// Get connection status
   static bool get isConnected => _isConnected;
@@ -135,6 +149,9 @@ class SocketService {
       print('🔌 Initializing socket connection...');
       print('📦 Driver ID: $_driverId');
       print('🔑 Token: ${_token!.substring(0, 20)}...');
+
+      // AudioService will be initialized lazily when needed (after login and when driver is online)
+      // This prevents sounds from playing on the login page
 
       // Listen for messages from overlay (accept/reject actions)
       print('👂 Setting up overlay listener...');
@@ -458,6 +475,31 @@ class SocketService {
   static void _setupEventListeners() {
     if (_socket == null) return;
 
+    // ✅ Remove existing listeners first to prevent duplicates on reconnection
+    if (_listenersRegistered) {
+      print('🧹 [SocketService] Removing existing listeners to prevent duplicates');
+      _socket!.off('rideRequest');
+      _socket!.off('newRideRequest');
+      _socket!.off('rideCancelled');
+      _socket!.off('rideNoLongerAvailable');
+      _socket!.off('driverStatusUpdate');
+      _socket!.off('driverConnected');
+      _socket!.off('serverMessage');
+      _socket!.off('rideAssigned');
+      _socket!.off('rideError');
+      _socket!.off('otpVerified');
+      _socket!.off('otpVerificationFailed');
+      _socket!.off('driverArrived');
+      _socket!.off('rideStarted');
+      _socket!.off('rideCompleted');
+      _socket!.off('rideCancelledByRider');
+      _socket!.off('messageReceived');
+      _socket!.off('rideMessages');
+      _socket!.off('unreadCountUpdated');
+      _socket!.off('driverEarningAdded');
+      print('✅ [SocketService] Existing listeners removed');
+    }
+
     // Connection events
     _socket!.onConnect((_) {
       _isConnected = true;
@@ -614,6 +656,12 @@ class SocketService {
       _handleRideAssigned(data);
     });
 
+    // Ride no longer available (accepted by another driver)
+    _socket!.on('rideNoLongerAvailable', (data) {
+      print('🚫 Ride no longer available: $data');
+      _handleRideNoLongerAvailable(data);
+    });
+
     // Ride error handling
     _socket!.on('rideError', (data) {
       print('❌ Ride error: $data');
@@ -666,6 +714,23 @@ class SocketService {
       _handleMessageError(data);
     });
 
+    _socket!.on('unreadCountUpdated', (data) {
+      print('🔔 Unread count updated: $data');
+      _handleUnreadCountUpdated(data);
+    });
+
+    _socket!.on('rideMessages', (data) {
+      print('📚 Ride messages received: $data');
+      _handleRideMessages(data);
+    });
+
+    _socket!.on('driverEarningAdded', (data) {
+      print('💰 [SocketService] Driver earning added: $data');
+      if (onDriverEarningAdded != null && data is Map) {
+        onDriverEarningAdded!(Map<String, dynamic>.from(data));
+      }
+    });
+
     // Rating events
     _socket!.on('ratingReceived', (data) {
       print('⭐ Rating received: $data');
@@ -699,6 +764,34 @@ class SocketService {
       _handleNotificationMarkedRead(data);
     });
 
+    // Payment events
+    _socket!.on('paymentCompleted', (data) {
+      print('💳 [SocketService] Payment completed event received');
+      print('   Data: $data');
+      if (data is Map) {
+        final rideId = data['rideId']?.toString();
+        final amount = data['amount']?.toDouble();
+        final paymentId = data['paymentId']?.toString();
+        
+        if (onPaymentCompleted != null) {
+          onPaymentCompleted!(rideId, amount, paymentId, Map<String, dynamic>.from(data));
+        }
+      }
+    });
+
+    _socket!.on('paymentFailed', (data) {
+      print('❌ [SocketService] Payment failed event received');
+      print('   Data: $data');
+      if (data is Map) {
+        final rideId = data['rideId']?.toString();
+        final reason = data['reason']?.toString();
+        
+        if (onPaymentFailed != null) {
+          onPaymentFailed!(rideId, reason);
+        }
+      }
+    });
+
     // Generic error event
     _socket!.on('errorEvent', (data) {
       print('❌ Error event: $data');
@@ -710,6 +803,10 @@ class SocketService {
       print('🔍 [DEBUG] Socket event received: "$event"');
       print('   Data: $data');
     });
+    
+    // Mark listeners as registered
+    _listenersRegistered = true;
+    print('✅ [SocketService] All event listeners registered');
   }
 
   /// Wait for socket connection with timeout
@@ -759,9 +856,13 @@ class SocketService {
 
     try {
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 5),
+        desiredAccuracy: LocationAccuracy.bestForNavigation, // Most accurate GPS setting
+        timeLimit: const Duration(seconds: 20), // Increased timeout for better GPS fix
+        forceAndroidLocationManager: false, // Use Google Play Services (more accurate)
       );
+
+      // Log location accuracy for debugging
+      print('📍 Location accuracy: ${position.accuracy}m');
 
       final locationData = {
         'driverId': _driverId,
@@ -776,6 +877,7 @@ class SocketService {
       print('   Driver ID: $_driverId');
       print('   Socket ID: $_currentSocketId');
       print('   Location: ${position.latitude}, ${position.longitude}');
+      print('   Accuracy: ${position.accuracy}m');
       _socket!.emit('driverLocationUpdate', locationData);
       print('✅ [SocketService] driverLocationUpdate emitted successfully');
     } catch (e) {
@@ -838,9 +940,16 @@ class SocketService {
 
     try {
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 5),
+        desiredAccuracy: LocationAccuracy.bestForNavigation, // Most accurate GPS setting
+        timeLimit: const Duration(seconds: 15), // Increased timeout for better GPS fix
+        forceAndroidLocationManager: false, // Use Google Play Services (more accurate)
       );
+
+      // Validate location accuracy - reject if accuracy is too poor (> 50 meters)
+      if (position.accuracy > 50) {
+        print('⚠️ Location accuracy too poor: ${position.accuracy}m, skipping update');
+        return;
+      }
 
       final locationData = {
         'driverId': _driverId,
@@ -859,6 +968,7 @@ class SocketService {
       print('   Socket ID: $_currentSocketId');
       print('   Ride ID: ${_currentRideId ?? "none"}');
       print('   Location: ${position.latitude}, ${position.longitude}');
+      print('   Accuracy: ${position.accuracy}m');
       _socket!.emit('driverLocationUpdate', locationData);
       print('✅ [SocketService] driverLocationUpdate emitted successfully');
     } catch (e) {
@@ -1146,6 +1256,70 @@ class SocketService {
     }
   }
 
+  static void getRideMessages(String rideId) {
+    if (_socket == null || !_isConnected) return;
+
+    try {
+      _socket!.emit('getRideMessages', {'rideId': rideId});
+      print('📚 Requested ride messages for: $rideId');
+    } catch (e) {
+      print('❌ Error requesting ride messages: $e');
+    }
+  }
+
+  /// Join a ride room for real-time messaging
+  static void joinRideRoom(String rideId) {
+    if (_socket == null || !_isConnected || _driverId == null) {
+      print('⚠️ [SocketService] Cannot join room:');
+      print('   Socket: ${_socket != null ? "exists" : "null"}');
+      print('   Connected: $_isConnected');
+      print('   Driver ID: ${_driverId ?? "null"}');
+      return;
+    }
+
+    try {
+      print('🚪 [SocketService] Joining ride room...');
+      print('   Ride ID: $rideId');
+      print('   Driver ID: $_driverId');
+      print('   Socket ID: $_currentSocketId');
+      
+      _socket!.emit('joinRideRoom', {
+        'rideId': rideId,
+        'driverId': _driverId,
+        'userType': 'Driver',
+      });
+      
+      print('✅ [SocketService] joinRideRoom event emitted');
+    } catch (e) {
+      print('❌ [SocketService] Error joining room: $e');
+      print('   Socket ID: $_currentSocketId');
+      print('   Driver ID: $_driverId');
+    }
+  }
+
+  /// Leave a ride room
+  static void leaveRideRoom(String rideId) {
+    if (_socket == null || !_isConnected) {
+      print('⚠️ [SocketService] Cannot leave room: socket not connected');
+      return;
+    }
+
+    try {
+      print('🚪 [SocketService] Leaving ride room...');
+      print('   Ride ID: $rideId');
+      print('   Socket ID: $_currentSocketId');
+      
+      _socket!.emit('leaveRideRoom', {
+        'rideId': rideId,
+      });
+      
+      print('✅ [SocketService] leaveRideRoom event emitted');
+    } catch (e) {
+      print('❌ [SocketService] Error leaving room: $e');
+      print('   Socket ID: $_currentSocketId');
+    }
+  }
+
   /// Submit rating for rider
   static void submitRating({
     required String rideId,
@@ -1257,6 +1431,7 @@ class SocketService {
         _socket = null;
         _isConnected = false;
         _currentSocketId = null;
+        _listenersRegistered = false; // Reset flag on disconnect
         print('✅ [SocketService] Socket disconnected and disposed');
         print('   Disconnected socket ID was: $socketId');
       } else {
@@ -1280,6 +1455,33 @@ class SocketService {
     print('🚗 Ride request received: $data');
   }
 
+  /// Initialize AudioService and play sound only when driver is logged in and online
+  static Future<void> _initializeAndPlaySound() async {
+    // Double-check driver is logged in and online before initializing AudioService
+    if (_driverId == null) {
+      print('⛔ Cannot play sound: Driver not logged in');
+      return;
+    }
+
+    if (!_isDriverOnline) {
+      print('⛔ Cannot play sound: Driver is offline');
+      return;
+    }
+
+    try {
+      // Initialize AudioService lazily only when needed
+      await AudioService.instance.initialize();
+      print('✅ AudioService initialized for sound playback');
+      
+      // Play notification sound
+      await AudioService.instance.playRideRequestSound();
+      print('✅ Notification sound played');
+    } catch (e) {
+      print('⚠️ Error initializing/playing sound (non-critical): $e');
+      // Don't throw - gracefully degrade if sound cannot play
+    }
+  }
+
   static void _handleNewRideRequest(dynamic data) {
     print('🚗 New ride request received: $data');
 
@@ -1289,9 +1491,34 @@ class SocketService {
       return;
     }
 
+    // ✅ CHECK DRIVER IS LOGGED IN (has valid driver ID)
+    if (_driverId == null) {
+      print('⛔ Driver not logged in - ignoring ride request');
+      return;
+    }
+
     try {
       // Parse the complete ride object
       final ride = RideModel.fromJson(data);
+      
+      // ✅ Deduplication: Check if this ride was recently processed (within last 5 seconds)
+      final rideId = ride.id;
+      if (_recentlyProcessedRides.contains(rideId)) {
+        print('⚠️ Ride $rideId was recently processed, ignoring duplicate event');
+        return;
+      }
+      
+      // Mark as recently processed
+      _recentlyProcessedRides.add(rideId);
+      
+      // Start cleanup timer if not already running
+      if (_recentRidesCleanupTimer == null || !_recentRidesCleanupTimer!.isActive) {
+        _recentRidesCleanupTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+          // Clear old entries (older than 5 seconds)
+          _recentlyProcessedRides.clear();
+          print('🧹 Cleared recently processed rides cache');
+        });
+      }
 
       // ✅ Check if ride already exists to prevent duplicates
       final existingIndex = _pendingRides.indexWhere((r) => r.id == ride.id);
@@ -1332,17 +1559,23 @@ class SocketService {
         } catch (e) {
           print('❌ Error updating UI list: $e');
         }
+        
+        // Play notification sound when app is in foreground
+        // Initialize AudioService lazily only when needed (driver is logged in and online)
+        _initializeAndPlaySound().catchError((e) {
+          print('⚠️ Error playing notification sound (non-critical): $e');
+        });
+        
         // DON'T show overlay - user can see the list
       } else {
         // App is in BACKGROUND or HomeScreen is not active
-        // TODO: Overlay showing logic commented out - working with list only for now
-        // print('🌙 App in background or HomeScreen inactive - showing overlay');
-        // try {
-        //   _showRideRequestOverlay(ride); // Show overlay
-        //   print('✅ Overlay display triggered');
-        // } catch (e) {
-        //   print('❌ Error showing overlay: $e');
-        // }
+        print('🌙 App in background or HomeScreen inactive - showing overlay');
+        try {
+          _showRideRequestOverlay(ride); // Show overlay
+          print('✅ Overlay display triggered');
+        } catch (e) {
+          print('❌ Error showing overlay: $e');
+        }
 
         print(
           '🌙 App in background or HomeScreen inactive - ride added to pending list',
@@ -1405,6 +1638,9 @@ class SocketService {
           'ℹ️ Ride $rideId not found in pending list (may have been removed already)',
         );
       }
+      
+      // Remove from recently processed rides cache
+      _recentlyProcessedRides.remove(rideId);
 
       // Check if overlay is showing this ride and close it
       if (_currentRideDetails != null &&
@@ -1414,10 +1650,34 @@ class SocketService {
         clearPendingRideRequest();
       }
 
+      // Parse cancellation reason and cancelledBy from data
+      String cancellationReason = 'Ride cancelled';
+      String cancelledBy = 'unknown';
+      if (data is Map) {
+        cancellationReason = data['reason'] ?? data['cancellationReason'] ?? 'Ride cancelled';
+        cancelledBy = data['cancelledBy'] ?? 'unknown';
+      }
+
       // Update UI if callback is available
       if (onRidesUpdated != null) {
         onRidesUpdated!(_pendingRides);
         print('✅ Notified UI of cancellation');
+      }
+
+      // 🔥 CRITICAL: Notify screens viewing this ride (e.g., ride details screen)
+      // This allows screens to show toast and navigate back to home
+      if (onRideCancelled != null) {
+        onRideCancelled!(rideId, cancellationReason, cancelledBy);
+        print('✅ Notified UI screens about ride cancellation');
+      }
+      
+      // ✅ Sync SocketProvider state if available
+      try {
+        // Import SocketProvider dynamically to avoid circular dependency
+        // We'll use a callback pattern instead
+        // SocketProvider will sync via onRidesUpdated callback
+      } catch (e) {
+        print('⚠️ Error syncing SocketProvider (non-critical): $e');
       }
 
       // Stop location updates when ride is cancelled
@@ -1497,8 +1757,66 @@ class SocketService {
     }
   }
 
+  static void _handleRideNoLongerAvailable(dynamic data) {
+    try {
+      print('🚫 Handling ride no longer available event');
+      print('   Data: $data');
+      
+      final rideId = data['rideId']?.toString();
+      if (rideId == null) {
+        print('⚠️ rideNoLongerAvailable: Missing rideId');
+        return;
+      }
+      
+      print('   Removing ride $rideId from pending list');
+      
+      // Remove ride from pending list
+      final beforeCount = _pendingRides.length;
+      _pendingRides.removeWhere((r) => r.id == rideId);
+      final afterCount = _pendingRides.length;
+      
+      if (beforeCount > afterCount) {
+        print('✅ Removed ride $rideId from pending list. Remaining: $afterCount');
+        
+        // Remove from recently processed rides cache
+        _recentlyProcessedRides.remove(rideId);
+        
+        // Clear pending ride request data if this was the current pending ride
+        final currentPendingRideId = _currentRideDetails?['rideId']?.toString();
+        if (currentPendingRideId == rideId) {
+          print('🧹 Clearing pending ride request data');
+          clearPendingRideRequest();
+        }
+        
+        // Notify UI to update pending rides list
+        if (onRidesUpdated != null) {
+          print('📢 Notifying UI of pending rides update');
+          onRidesUpdated!(_pendingRides);
+        } else {
+          print('ℹ️ UI callback null, list still updated');
+        }
+      } else {
+        print('ℹ️ Ride $rideId not found in pending list (may have been removed already)');
+      }
+    } catch (e) {
+      print('❌ Error handling rideNoLongerAvailable: $e');
+    }
+  }
+
   static void _handleRideError(dynamic data) {
     print('❌ Ride assignment error: ${data['message']}');
+    
+    // If error is about ride already accepted, remove it from pending list
+    final errorMessage = data['message']?.toString().toLowerCase() ?? '';
+    final rideId = data['rideId']?.toString();
+    
+    if ((errorMessage.contains('already accepted') || 
+         errorMessage.contains('no longer available')) && 
+        rideId != null) {
+      print('🚫 Ride $rideId already accepted, removing from pending list');
+      _handleRideNoLongerAvailable({'rideId': rideId});
+    }
+    
     // TODO: Show error notification to driver
     // Common errors: "Ride already assigned to another driver"
   }
@@ -1627,22 +1945,32 @@ class SocketService {
   }
 
   static void _handleRideCompleted(dynamic data) {
-    print('🏁 Ride completed successfully');
+    print('🏁 Ride completed event received');
+    print('   Data type: ${data.runtimeType}');
+    print('   Data: $data');
     try {
       final ride = RideModel.fromJson(data);
-      print('💰 Fare: ₹${ride.fare}');
-      print('⏱️ Duration: ${ride.actualDuration} minutes');
+      print('✅ Ride parsed successfully');
+      print('   Ride ID: ${ride.id}');
+      print('   Fare: ₹${ride.fare}');
+      print('   Duration: ${ride.actualDuration} minutes');
+      print('   Payment Method: ${ride.paymentMethod.displayName}');
+      print('   Payment Status: ${ride.paymentStatus.displayName}');
+      print('   Status: ${ride.status.displayName}');
 
-      // Notify UI to update ride status
+      // Notify UI to update ride status with complete ride data
       if (onRideStatusUpdated != null) {
         onRideStatusUpdated!(ride);
-        print('✅ Notified UI of ride status update');
+        print('✅ Notified UI of ride status update with payment info');
+      } else {
+        print('⚠️ onRideStatusUpdated callback is null');
       }
 
       // Stop location updates
       stopLocationUpdates();
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Error parsing completed ride: $e');
+      print('   Stack trace: $stackTrace');
     }
   }
 
@@ -1683,6 +2011,46 @@ class SocketService {
   static void _handleMessageError(dynamic data) {
     print('❌ Message error: ${data['message']}');
     // TODO: Show error in chat UI
+  }
+
+  static void _handleUnreadCountUpdated(dynamic data) {
+    try {
+      if (data is Map) {
+        print('🔔 Unread count updated - rideId: ${data['rideId']}, count: ${data['unreadCount']}');
+        if (onUnreadCountUpdated != null) {
+          onUnreadCountUpdated!(data as Map<String, dynamic>);
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling unread count update: $e');
+    }
+  }
+
+  static void _handleRideMessages(dynamic data) {
+    try {
+      if (data is List) {
+        print('📚 Processing ${data.length} ride messages');
+        final messages = data
+            .map((json) {
+              try {
+                return MessageModel.fromJson(json as Map<String, dynamic>);
+              } catch (e) {
+                print('❌ Error parsing message: $e');
+                return null;
+              }
+            })
+            .whereType<MessageModel>()
+            .toList();
+        
+        if (onRideMessages != null) {
+          onRideMessages!(messages);
+        }
+      } else {
+        print('⚠️ Invalid rideMessages format: ${data.runtimeType}');
+      }
+    } catch (e) {
+      print('❌ Error handling ride messages: $e');
+    }
   }
 
   static void _handleRatingReceived(dynamic data) {
@@ -1735,9 +2103,32 @@ class SocketService {
   }
 
   /// Show ride request overlay with ride data
-  /// TODO: Currently commented out - working with list only for now
   static void _showRideRequestOverlay(RideModel? ride) {
     try {
+      // Check 1: Verify driver is actually authenticated (has valid token)
+      if (_token == null || _token!.isEmpty) {
+        print('⛔ Cannot show overlay: Driver not authenticated (no token found)');
+        return;
+      }
+
+      // Check 2: Driver ID exists
+      if (_driverId == null) {
+        print('⛔ Cannot show overlay: Driver not logged in');
+        return;
+      }
+
+      // Check 3: Driver is online
+      if (!_isDriverOnline) {
+        print('⛔ Cannot show overlay: Driver is offline');
+        return;
+      }
+
+      // Check 4: Verify ride is valid (not null and has valid data)
+      if (ride == null || ride.id.isEmpty) {
+        print('⛔ Cannot show overlay: Invalid ride data');
+        return;
+      }
+
       print(
         '🎯 Received ride request in background - showing overlay immediately',
       );
@@ -1759,7 +2150,6 @@ class SocketService {
   }
 
   /// Show overlay directly from background service
-  /// TODO: Currently commented out - working with list only for now
   static void _showOverlayFromBackground() async {
     try {
       print('📱 Showing overlay directly from background service...');
@@ -2014,6 +2404,9 @@ class SocketService {
     onOtpVerifiedForCompletion = null;
     onOtpVerificationFailed = null;
     onMessageReceived = null;
+    onRideMessages = null;
+    onDriverEarningAdded = null;
+    onUnreadCountUpdated = null;
     onConnectionStatusChanged = null;
     print('✅ [SocketService] All callbacks cleared');
 

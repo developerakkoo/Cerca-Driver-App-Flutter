@@ -5,8 +5,12 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/models/driver_model.dart';
 import 'package:driver_cerca/services/socket_service.dart';
+import 'package:driver_cerca/services/message_service.dart';
+import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/widgets/rating_dialog.dart';
 import 'package:driver_cerca/screens/chat_screen.dart';
+import 'package:driver_cerca/screens/cash_collection_screen.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
@@ -26,6 +30,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   late RideModel _ride;
   bool _isLoading = false;
   int _unreadMessageCount = 0;
+  String? _driverId;
 
   // Google Maps
   GoogleMapController? _mapController;
@@ -44,14 +49,57 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   void initState() {
     super.initState();
     _ride = widget.ride;
+    _loadDriverId();
+    _setupUnreadCountListener();
     _loadUnreadMessageCount();
     _initializeMap();
     _startLocationTracking();
     _setupRideStatusListener();
+    _joinRideRoom();
+  }
+
+  void _joinRideRoom() {
+    print('🚪 [ActiveRideScreen] Joining ride room...');
+    print('   Ride ID: ${_ride.id}');
+    print('   Socket connected: ${SocketService.isConnected}');
+
+    // Wait for socket connection before joining
+    if (SocketService.isConnected) {
+      SocketService.joinRideRoom(_ride.id);
+      print('✅ [ActiveRideScreen] Joined ride room immediately');
+    } else {
+      print(
+        '⚠️ [ActiveRideScreen] Socket not connected, will join when connected',
+      );
+      // Retry with exponential backoff
+      int retryCount = 0;
+      void tryJoin() {
+        if (retryCount < 5 && mounted) {
+          Future.delayed(Duration(seconds: retryCount + 1), () {
+            if (SocketService.isConnected && mounted) {
+              SocketService.joinRideRoom(_ride.id);
+              print('✅ [ActiveRideScreen] Joined ride room after retry ${retryCount + 1}');
+            } else if (mounted) {
+              retryCount++;
+              tryJoin();
+            }
+          });
+        } else if (mounted) {
+          print('⚠️ [ActiveRideScreen] Failed to join ride room after ${retryCount} retries');
+        }
+      }
+      tryJoin();
+    }
+  }
+
+  Future<void> _loadDriverId() async {
+    _driverId = await StorageService.getDriverId();
   }
 
   void _setupRideStatusListener() {
-    print('🎧 [ActiveRideScreen] Setting up ride status listener for ride: ${_ride.id}');
+    print(
+      '🎧 [ActiveRideScreen] Setting up ride status listener for ride: ${_ride.id}',
+    );
     print('   Current status: ${_ride.status.displayName}');
 
     // Listen for rideAssigned event (sent when ride is first accepted)
@@ -67,9 +115,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         setState(() {
           _ride = assignedRide;
         });
-        print(
-          '   ✅ Ride updated in UI: ${assignedRide.status.displayName}',
-        );
+        print('   ✅ Ride updated in UI: ${assignedRide.status.displayName}');
       } else {
         print('   ⚠️ Skipping update - ID mismatch or not mounted');
       }
@@ -84,18 +130,23 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       print('   Mounted: $mounted');
       print('   New Status: ${updatedRide.status.displayName}');
       print('   Current Status: ${_ride.status.displayName}');
+      print('   Payment Method: ${updatedRide.paymentMethod.displayName}');
+      print('   Payment Status: ${updatedRide.paymentStatus.displayName}');
 
       if (updatedRide.id == _ride.id && mounted) {
         print('   ✅ Updating ride state...');
         setState(() {
+          // Update ride with all fields from completed ride
           _ride = updatedRide;
         });
         print(
           '   ✅ Ride status updated in UI: ${updatedRide.status.displayName}',
         );
+        print('   ✅ Payment Method: ${updatedRide.paymentMethod.displayName}, Payment Status: ${updatedRide.paymentStatus.displayName}');
 
-        // If ride just completed, show rating dialog
+        // If ride just completed, handle completion (payment screen + rating)
         if (updatedRide.status == RideStatus.completed) {
+          // Use updated ride data for payment check
           _handleRideCompletion();
         }
       } else {
@@ -122,10 +173,54 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         );
       }
     };
+
+    // Listen for payment completed event
+    SocketService.onPaymentCompleted = (rideId, amount, paymentId, data) {
+      if (rideId == _ride.id && mounted) {
+        print('💳 Payment completed for ride: $rideId, Amount: ₹$amount');
+        // Update ride state if ride object is included
+        if (data['ride'] != null) {
+          try {
+            setState(() {
+              _ride = RideModel.fromJson(data['ride']);
+            });
+            print('✅ Ride state updated with payment status');
+          } catch (e) {
+            print('❌ Error updating ride from payment event: $e');
+          }
+        }
+        // Show success notification
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('💳 Payment completed: ₹${amount?.toStringAsFixed(2) ?? '0.00'}'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    };
+
+    // Listen for payment failed event
+    SocketService.onPaymentFailed = (rideId, reason) {
+      if (rideId == _ride.id && mounted) {
+        print('❌ Payment failed for ride: $rideId, Reason: $reason');
+        // Show failure notification
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Payment failed: ${reason ?? "Unknown error"}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    };
   }
 
   Future<void> _handleRideCompletion() async {
     print('🏁 Handling ride completion...');
+    print('   Payment Method: ${_ride.paymentMethod.displayName}');
+    print('   Payment Status: ${_ride.paymentStatus.displayName}');
+    print('   Fare: ₹${_ride.fare}');
     setState(() => _isLoading = false);
 
     if (mounted) {
@@ -133,42 +228,135 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         context,
       ).showSnackBar(const SnackBar(content: Text('✅ Ride completed')));
 
-      // Show rating dialog for the rider
-      if (_ride.rider != null) {
-        await showRatingDialog(
-          context: context,
-          rideId: _ride.id,
-          riderId: _ride.rider!.id,
-          riderName: _ride.rider!.fullName,
+      // Store ride reference to ensure we use latest data
+      final completedRide = _ride;
+      
+      // Check payment method - show appropriate screen
+      if (completedRide.paymentMethod == PaymentMethod.cash) {
+        print('💰 Cash payment detected - showing cash collection screen');
+        // Navigate to cash collection screen
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CashCollectionScreen(ride: completedRide),
+          ),
         );
+
+        // After cash collection screen is dismissed, show rating dialog
+        if (mounted && completedRide.rider != null) {
+          await showRatingDialog(
+            context: context,
+            rideId: completedRide.id,
+            riderId: completedRide.rider!.id,
+            riderName: completedRide.rider!.fullName,
+          );
+        }
+      } else if (completedRide.paymentMethod == PaymentMethod.razorpay) {
+        // For RAZORPAY (Pay Online), show payment collection screen with online payment info
+        print('💳 Online payment detected - showing payment collection screen');
+        print('   Payment Status: ${completedRide.paymentStatus.displayName}');
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CashCollectionScreen(ride: completedRide),
+          ),
+        );
+
+        // After payment screen is dismissed, show rating dialog
+        if (mounted && completedRide.rider != null) {
+          await showRatingDialog(
+            context: context,
+            rideId: completedRide.id,
+            riderId: completedRide.rider!.id,
+            riderName: completedRide.rider!.fullName,
+          );
+        }
+      } else {
+        // For WALLET payments, show rating dialog directly
+        print('💳 Wallet payment - showing rating dialog directly');
+        if (completedRide.rider != null) {
+          await showRatingDialog(
+            context: context,
+            rideId: completedRide.id,
+            riderId: completedRide.rider!.id,
+            riderName: completedRide.rider!.fullName,
+          );
+        }
       }
 
-      Navigator.pop(context);
+      // Navigate back to home
+      if (mounted) {
+        Navigator.pop(context);
+      }
     }
   }
 
   @override
   void dispose() {
+    // Leave ride room when leaving active ride screen
+    print('🚪 [ActiveRideScreen] Leaving ride room...');
+    SocketService.leaveRideRoom(_ride.id);
+
     _locationSubscription?.cancel();
     _mapController?.dispose();
     SocketService.onRideAssigned = null; // Clear callback
     SocketService.onRideStatusUpdated = null; // Clear callback
     SocketService.onOtpVerifiedForCompletion = null; // Clear callback
     SocketService.onOtpVerificationFailed = null; // Clear callback
+    SocketService.onUnreadCountUpdated = null; // Clear callback
     super.dispose();
   }
 
-  void _loadUnreadMessageCount() {
-    // TODO: Implement actual unread message count from MessageService
-    setState(() {
-      _unreadMessageCount = 0;
-    });
+  Future<void> _loadUnreadMessageCount() async {
+    if (_driverId == null) return;
+    try {
+      final count = await MessageService.getUnreadCountForRide(
+        _ride.id,
+        _driverId!,
+      );
+      if (mounted) {
+        setState(() {
+          _unreadMessageCount = count;
+        });
+      }
+      print('📬 Unread message count loaded: $count');
+    } catch (e) {
+      print('❌ Error loading unread message count: $e');
+      if (mounted) {
+        setState(() {
+          _unreadMessageCount = 0;
+        });
+      }
+    }
+  }
+
+  void _setupUnreadCountListener() {
+    SocketService.onUnreadCountUpdated = (data) {
+      final rideId = data['rideId'] as String?;
+      final unreadCount = data['unreadCount'] as int? ?? 0;
+
+      if (rideId == _ride.id && mounted) {
+        print('🔔 Unread count updated for current ride: $unreadCount');
+        setState(() {
+          _unreadMessageCount = unreadCount;
+        });
+      }
+    };
   }
 
   Future<void> _initializeMap() async {
-    // Get current location
+    // Get current location with best accuracy
     try {
-      final position = await Geolocator.getCurrentPosition();
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy:
+            LocationAccuracy.bestForNavigation, // Most accurate GPS setting
+        timeLimit: const Duration(
+          seconds: 20,
+        ), // Increased timeout for better GPS fix
+        forceAndroidLocationManager:
+            false, // Use Google Play Services (more accurate)
+      );
+      print('📍 Map initialization - Location accuracy: ${position.accuracy}m');
       _currentDriverLocation = LatLng(position.latitude, position.longitude);
       _updateMarkers();
       _drawRoute();
@@ -178,31 +366,40 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   }
 
   void _startLocationTracking() {
-    // Listen to location changes
+    // Listen to location changes with best accuracy
     const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10, // Update every 10 meters
+      accuracy: LocationAccuracy.bestForNavigation, // Most accurate GPS setting
+      distanceFilter: 5, // Update every 5 meters for more frequent updates
     );
 
     _locationSubscription =
-        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-          (Position position) {
-            setState(() {
-              _currentDriverLocation = LatLng(
-                position.latitude,
-                position.longitude,
-              );
-              _updateMarkers();
-              _updateCameraPosition();
-            });
+        Geolocator.getPositionStream(
+          locationSettings: locationSettings,
+        ).listen((Position position) {
+          // Validate location accuracy - reject if accuracy is too poor (> 50 meters)
+          if (position.accuracy > 50) {
+            print(
+              '⚠️ Location accuracy too poor: ${position.accuracy}m, skipping update',
+            );
+            return;
+          }
 
-            // Emit location update via socket
-            SocketService.emitLocationUpdate(
+          print('📍 Location update - Accuracy: ${position.accuracy}m');
+          setState(() {
+            _currentDriverLocation = LatLng(
               position.latitude,
               position.longitude,
             );
-          },
-        );
+            _updateMarkers();
+            _updateCameraPosition();
+          });
+
+          // Emit location update via socket
+          SocketService.emitLocationUpdate(
+            position.latitude,
+            position.longitude,
+          );
+        });
   }
 
   void _updateMarkers() {
@@ -280,7 +477,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       _polylines = {
         Polyline(
           polylineId: const PolylineId('route'),
-          color: Colors.indigo,
+          color: AppColors.primary,
           width: 5,
           points: polylineCoordinates,
           patterns: [PatternItem.dash(20), PatternItem.gap(10)],
@@ -377,7 +574,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       print('✅ [ActiveRideScreen] Updating ride status...');
       print('   Old status: ${_ride.status.displayName}');
       print('   New status: ${updatedRide.status.displayName}');
-      
+
       setState(() {
         _ride = updatedRide;
         _isLoading = false; // Stop loading immediately
@@ -386,10 +583,12 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       print('✅ [ActiveRideScreen] Status updated successfully');
       print('   Current ride status: ${_ride.status.displayName}');
       print('   UI should rebuild and show appropriate button');
-      
+
       // Verify the state change
       if (_ride.status == RideStatus.arrived) {
-        print('   ✅ Status is now "arrived" - "Start Ride" button should be visible');
+        print(
+          '   ✅ Status is now "arrived" - "Start Ride" button should be visible',
+        );
       }
 
       if (mounted) {
@@ -448,30 +647,6 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('❌ Invalid OTP or error: $e')));
-      }
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _handleCancelRide() async {
-    final reason = await _showCancelDialog(context);
-    if (reason == null || reason.isEmpty) return;
-
-    setState(() => _isLoading = true);
-    try {
-      SocketService.cancelRide(_ride.id, reason);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('✅ Ride cancelled')));
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('❌ Error: $e')));
       }
     } finally {
       setState(() => _isLoading = false);
@@ -572,14 +747,32 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   }
 
   Future<void> _callPassenger() async {
-    if (_ride.rider == null || _ride.rider!.phone == null) return;
-    final uri = Uri.parse('tel:${_ride.rider!.phone}');
+    String? phoneNumber;
+
+    // Use passenger phone if ride is for other person
+    if (_ride.rideFor == RideFor.other && _ride.passenger?.phone != null) {
+      phoneNumber = _ride.passenger!.phone;
+    } else if (_ride.rider?.phone != null) {
+      phoneNumber = _ride.rider!.phone;
+    }
+
+    if (phoneNumber == null) return;
+
+    final uri = Uri.parse('tel:$phoneNumber');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     }
   }
 
-  void _openChat() {
+  Future<void> _openChat() async {
+    // Mark all messages as read before opening chat
+    if (_driverId != null) {
+      await MessageService.markAllMessagesAsRead(_ride.id, _driverId!);
+      setState(() {
+        _unreadMessageCount = 0;
+      });
+    }
+
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => ChatScreen(ride: _ride)),
@@ -591,7 +784,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Active Ride'),
-        backgroundColor: Colors.indigo,
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           // Fit markers button
@@ -655,7 +848,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
                           _isMapExpanded
                               ? Icons.expand_less
                               : Icons.expand_more,
-                          color: Colors.indigo,
+                          color: AppColors.primary,
                         ),
                       ),
                     ),
@@ -706,7 +899,18 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
   }
 
   Widget _buildPassengerCard() {
-    if (_ride.rider == null) return const SizedBox();
+    // Determine which info to show
+    final bool isRideForOther = _ride.rideFor == RideFor.other && _ride.passenger != null;
+    final String displayName = isRideForOther
+        ? (_ride.passenger!.name ?? 'Passenger')
+        : (_ride.rider?.fullName ?? 'Rider');
+    final String? displayPhone = isRideForOther
+        ? _ride.passenger!.phone
+        : _ride.rider?.phone;
+
+    // Return empty if no data available
+    if (!isRideForOther && _ride.rider == null) return const SizedBox();
+    if (isRideForOther && _ride.passenger == null) return const SizedBox();
 
     return Card(
       elevation: 2,
@@ -716,13 +920,13 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
           children: [
             CircleAvatar(
               radius: 30,
-              backgroundColor: Colors.indigo.shade100,
+              backgroundColor: AppColors.primary.withOpacity(0.1),
               child: Text(
-                _ride.rider!.fullName[0].toUpperCase(),
+                displayName[0].toUpperCase(),
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: Colors.indigo.shade700,
+                  color: AppColors.primary,
                 ),
               ),
             ),
@@ -732,15 +936,15 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _ride.rider!.fullName,
+                    displayName,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  if (_ride.rider!.phone != null)
+                  if (displayPhone != null)
                     Text(
-                      _ride.rider!.phone!,
+                      displayPhone,
                       style: const TextStyle(color: Colors.grey),
                     ),
                 ],
@@ -750,12 +954,14 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
               icon: const Icon(Icons.phone, color: Colors.green),
               onPressed: _callPassenger,
             ),
-            Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chat, color: Colors.indigo),
-                  onPressed: _openChat,
-                ),
+            // Hide chat when ride is for other person
+            if (_ride.rideFor != RideFor.other)
+              Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chat, color: AppColors.primary),
+                    onPressed: _openChat,
+                  ),
                 if (_unreadMessageCount > 0)
                   Positioned(
                     right: 8,
@@ -817,7 +1023,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.navigation, color: Colors.indigo),
+                  icon: const Icon(Icons.navigation, color: AppColors.primary),
                   onPressed: _navigateToPickup,
                 ),
               ],
@@ -856,7 +1062,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.navigation, color: Colors.indigo),
+                  icon: const Icon(Icons.navigation, color: AppColors.primary),
                   onPressed: _navigateToDropoff,
                 ),
               ],
@@ -938,7 +1144,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
               icon: const Icon(Icons.play_arrow),
               label: const Text('Start Ride', style: TextStyle(fontSize: 16)),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo,
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
               ),
             ),
@@ -961,22 +1167,6 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
               ),
             ),
           ),
-        const SizedBox(height: 12),
-
-        // Cancel button
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: OutlinedButton.icon(
-            onPressed: _handleCancelRide,
-            icon: const Icon(Icons.cancel),
-            label: const Text('Cancel Ride', style: TextStyle(fontSize: 16)),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.red,
-              side: const BorderSide(color: Colors.red),
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -1006,54 +1196,6 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
             child: const Text('Verify'),
           ),
         ],
-      ),
-    );
-  }
-
-  Future<String?> _showCancelDialog(BuildContext context) {
-    String selectedReason = 'Passenger not responding';
-    final reasons = [
-      'Passenger not responding',
-      'Passenger cancelled',
-      'Vehicle issue',
-      'Emergency',
-      'Other',
-    ];
-
-    return showDialog<String>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Cancel Ride'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Select cancellation reason:'),
-              const SizedBox(height: 16),
-              ...reasons.map(
-                (reason) => RadioListTile<String>(
-                  title: Text(reason),
-                  value: reason,
-                  groupValue: selectedReason,
-                  onChanged: (value) {
-                    setState(() => selectedReason = value!);
-                  },
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Back'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, selectedReason),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Cancel Ride'),
-            ),
-          ],
-        ),
       ),
     );
   }

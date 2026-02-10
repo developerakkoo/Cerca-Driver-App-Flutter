@@ -38,6 +38,10 @@ class RideModel {
   final double cancellationFee;
   final String? transactionId;
   final CustomSchedule? customSchedule;
+  final BookingType? bookingType;
+  final BookingMeta? bookingMeta;
+  final RideFor? rideFor;
+  final PassengerInfo? passenger;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -75,6 +79,10 @@ class RideModel {
     this.cancellationFee = 0.0,
     this.transactionId,
     this.customSchedule,
+    this.bookingType,
+    this.bookingMeta,
+    this.rideFor,
+    this.passenger,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -134,6 +142,18 @@ class RideModel {
       customSchedule: json['customSchedule'] != null
           ? CustomSchedule.fromJson(json['customSchedule'])
           : null,
+      bookingType: json['bookingType'] != null
+          ? BookingType.fromString(json['bookingType'])
+          : null,
+      bookingMeta: json['bookingMeta'] != null
+          ? BookingMeta.fromJson(json['bookingMeta'])
+          : null,
+      rideFor: json['rideFor'] != null
+          ? RideFor.fromString(json['rideFor'])
+          : null,
+      passenger: json['passenger'] != null
+          ? PassengerInfo.fromJson(json['passenger'])
+          : null,
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'])
           : DateTime.now(),
@@ -178,9 +198,47 @@ class RideModel {
       'cancellationFee': cancellationFee,
       'transactionId': transactionId,
       'customSchedule': customSchedule?.toJson(),
+      'bookingType': bookingType?.value,
+      'bookingMeta': bookingMeta?.toJson(),
+      'rideFor': rideFor?.value,
+      'passenger': passenger?.toJson(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
+  }
+
+  /// Check if this is a scheduled booking (not instant)
+  bool isScheduledBooking() {
+    return bookingType != null && bookingType != BookingType.instant;
+  }
+
+  /// Check if this is a Full Day booking
+  bool isFullDayBooking() {
+    return bookingType == BookingType.fullDay;
+  }
+
+  /// Check if ride is active (for Full Day bookings, check if scheduled time has arrived)
+  bool isRideActive() {
+    if (bookingType == BookingType.fullDay && bookingMeta?.startTime != null) {
+      final startTime = bookingMeta!.startTime!;
+      final now = DateTime.now();
+      return now.isAfter(startTime) || now.isAtSameMomentAs(startTime);
+    }
+    // For instant rides or other booking types, consider active if status allows
+    return status == RideStatus.accepted || 
+           status == RideStatus.inProgress || 
+           status == RideStatus.arrived ||
+           status == RideStatus.ongoing;
+  }
+
+  /// Get booking start time if available
+  DateTime? getBookingStartTime() {
+    return bookingMeta?.startTime;
+  }
+
+  /// Get booking end time if available
+  DateTime? getBookingEndTime() {
+    return bookingMeta?.endTime;
   }
 
   @override
@@ -343,6 +401,134 @@ enum PaymentStatus {
       case PaymentStatus.refunded:
         return 'Refunded';
     }
+  }
+}
+
+/// Booking type enum
+enum BookingType {
+  instant('INSTANT'),
+  fullDay('FULL_DAY'),
+  rental('RENTAL'),
+  dateWise('DATE_WISE');
+
+  final String value;
+  const BookingType(this.value);
+
+  static BookingType fromString(String value) {
+    switch (value.toUpperCase()) {
+      case 'INSTANT':
+        return BookingType.instant;
+      case 'FULL_DAY':
+        return BookingType.fullDay;
+      case 'RENTAL':
+        return BookingType.rental;
+      case 'DATE_WISE':
+        return BookingType.dateWise;
+      default:
+        return BookingType.instant;
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case BookingType.instant:
+        return 'Instant';
+      case BookingType.fullDay:
+        return 'Full Day';
+      case BookingType.rental:
+        return 'Rental';
+      case BookingType.dateWise:
+        return 'Date Wise';
+    }
+  }
+}
+
+/// Booking metadata for scheduled bookings
+class BookingMeta {
+  final DateTime? startTime;
+  final DateTime? endTime;
+  final int? days;
+  final List<DateTime>? dates;
+
+  BookingMeta({
+    this.startTime,
+    this.endTime,
+    this.days,
+    this.dates,
+  });
+
+  factory BookingMeta.fromJson(Map<String, dynamic> json) {
+    return BookingMeta(
+      startTime: json['startTime'] != null
+          ? DateTime.parse(json['startTime'])
+          : null,
+      endTime: json['endTime'] != null
+          ? DateTime.parse(json['endTime'])
+          : null,
+      days: json['days'],
+      dates: json['dates'] != null
+          ? (json['dates'] as List)
+              .map((d) => DateTime.parse(d))
+              .toList()
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'startTime': startTime?.toIso8601String(),
+      'endTime': endTime?.toIso8601String(),
+      'days': days,
+      'dates': dates?.map((d) => d.toIso8601String()).toList(),
+    };
+  }
+}
+
+/// Ride for enum (SELF or OTHER)
+enum RideFor {
+  self('SELF'),
+  other('OTHER');
+
+  final String value;
+  const RideFor(this.value);
+
+  static RideFor fromString(String value) {
+    switch (value.toUpperCase()) {
+      case 'SELF':
+        return RideFor.self;
+      case 'OTHER':
+        return RideFor.other;
+      default:
+        return RideFor.self;
+    }
+  }
+}
+
+/// Passenger information for rides booked for other person
+class PassengerInfo {
+  final String? name;
+  final String? phone;
+  final String? relation;
+  final String? notes;
+
+  PassengerInfo({this.name, this.phone, this.relation, this.notes});
+
+  factory PassengerInfo.fromJson(Map<String, dynamic> json) {
+    return PassengerInfo(
+      name: json['name'],
+      phone: json['phone'],
+      relation: json['relation'],
+      notes: json['notes'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'phone': phone,
+      'relation': relation,
+      'notes': notes,
+    };
   }
 }
 

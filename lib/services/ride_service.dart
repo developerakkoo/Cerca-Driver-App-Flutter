@@ -206,4 +206,37 @@ class RideService {
       throw Exception('Failed to fetch ride history: $e');
     }
   }
+
+  /// Mark cash as collected for a ride
+  /// PATCH /drivers/:driverId/rides/:rideId/mark-cash-collected
+  static Future<void> markCashCollected({
+    required String driverId,
+    required String rideId,
+  }) async {
+    try {
+      print('💰 Marking cash as collected for ride: $rideId');
+
+      final token = await StorageService.getToken();
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await _dio.patch(
+        '/drivers/$driverId/rides/$rideId/mark-cash-collected',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      print('✅ Cash marked as collected: ${response.statusCode}');
+    } on DioException catch (e) {
+      print('❌ DioException marking cash as collected: ${e.message}');
+      if (e.response != null) {
+        print('📦 Status Code: ${e.response?.statusCode}');
+        print('📦 Response Data: ${e.response?.data}');
+      }
+      throw Exception('Failed to mark cash as collected: ${e.message}');
+    } catch (e) {
+      print('❌ Error marking cash as collected: $e');
+      throw Exception('Failed to mark cash as collected: $e');
+    }
+  }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:driver_cerca/models/driver_model.dart';
 import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/constants/constants.dart';
 
 class VehicleDetailsScreen extends StatefulWidget {
   final DriverModel driver;
@@ -120,7 +121,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vehicle Details'),
-        backgroundColor: Colors.indigo[600],
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           if (_isLoading)
@@ -144,7 +145,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.indigo[50]!, Colors.white],
+            colors: [AppColors.primary.withOpacity(0.1), Colors.white],
           ),
         ),
         child: Form(
@@ -179,7 +180,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           hintText: 'e.g., Toyota',
                           prefixIcon: Icon(
                             Icons.directions_car,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -187,7 +188,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -208,7 +209,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           hintText: 'e.g., Camry',
                           prefixIcon: Icon(
                             Icons.drive_eta,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -216,7 +217,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -241,7 +242,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           hintText: 'e.g., 2020',
                           prefixIcon: Icon(
                             Icons.calendar_today,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -249,7 +250,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -274,7 +275,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           hintText: 'e.g., White',
                           prefixIcon: Icon(
                             Icons.palette,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -282,7 +283,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -303,7 +304,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           hintText: 'e.g., KA01AB1234',
                           prefixIcon: Icon(
                             Icons.confirmation_number,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -311,7 +312,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -330,7 +331,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           labelText: 'Vehicle Type',
                           prefixIcon: Icon(
                             Icons.category,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -338,7 +339,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -370,7 +371,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[600],
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(

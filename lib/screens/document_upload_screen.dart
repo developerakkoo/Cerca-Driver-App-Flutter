@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:driver_cerca/services/auth_service.dart';
 import 'package:driver_cerca/screens/login_screen.dart';
+import 'package:driver_cerca/constants/constants.dart';
 
 class DocumentUploadScreen extends StatefulWidget {
   final String driverId;
@@ -60,12 +61,12 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.camera_alt, color: Colors.indigo),
+                leading: const Icon(Icons.camera_alt, color: AppColors.primary),
                 title: const Text('Camera'),
                 onTap: () => Navigator.pop(context, ImageSource.camera),
               ),
               ListTile(
-                leading: const Icon(Icons.photo_library, color: Colors.indigo),
+                leading: const Icon(Icons.photo_library, color: AppColors.primary),
                 title: const Text('Gallery'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
@@ -178,7 +179,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
             Expanded(child: Text(message)),
           ],
         ),
-        backgroundColor: Colors.blue,
+        backgroundColor: AppColors.primary,
         duration: const Duration(seconds: 2),
       ),
     );
@@ -194,9 +195,9 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.indigo[700]!,
-              Colors.indigo[500]!,
-              Colors.blue[400]!,
+              AppColors.primary,
+              AppColors.primary.withOpacity(0.8),
+              AppColors.primary.withOpacity(0.6),
             ],
           ),
         ),
@@ -293,10 +294,10 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: Colors.blue[50],
+                                  color: AppColors.primary.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(10),
                                   border: Border.all(
-                                    color: Colors.blue[100]!,
+                                    color: AppColors.primary.withOpacity(0.3),
                                     width: 1,
                                   ),
                                 ),
@@ -304,7 +305,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                                   children: [
                                     Icon(
                                       Icons.info_outline,
-                                      color: Colors.blue[700],
+                                      color: AppColors.primary,
                                       size: 18,
                                     ),
                                     const SizedBox(width: 8),
@@ -313,7 +314,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                                         'Upload clear and readable documents',
                                         style: TextStyle(
                                           fontSize: 11,
-                                          color: Colors.blue[900],
+                                          color: AppColors.primary,
                                         ),
                                       ),
                                     ),
@@ -324,7 +325,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                               ElevatedButton(
                                 onPressed: _isUploading ? null : _handleSubmit,
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.indigo[600],
+                                  backgroundColor: AppColors.primary,
                                   foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 14,
@@ -333,7 +334,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   elevation: 3,
-                                  shadowColor: Colors.indigo.withOpacity(0.5),
+                                  shadowColor: AppColors.primary.withOpacity(0.5),
                                 ),
                                 child: _isUploading
                                     ? const SizedBox(
@@ -407,12 +408,12 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: hasImage ? Colors.green[100] : Colors.indigo[100],
+                    color: hasImage ? Colors.green[100] : AppColors.primary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     icon,
-                    color: hasImage ? Colors.green[700] : Colors.indigo[700],
+                    color: hasImage ? Colors.green[700] : AppColors.primary,
                     size: 20,
                   ),
                 ),
@@ -495,7 +496,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                         icon: const Icon(Icons.refresh, size: 18),
                         style: IconButton.styleFrom(
                           backgroundColor: Colors.white,
-                          foregroundColor: Colors.indigo[700],
+                          foregroundColor: AppColors.primary,
                           padding: const EdgeInsets.all(6),
                         ),
                       ),
@@ -525,7 +526,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[600],
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,

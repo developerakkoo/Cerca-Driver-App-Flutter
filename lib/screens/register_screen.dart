@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:driver_cerca/screens/document_upload_screen.dart';
 import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/constants/constants.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -70,9 +71,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
+        desiredAccuracy: LocationAccuracy.bestForNavigation, // Most accurate GPS setting
+        timeLimit: const Duration(seconds: 20), // Increased timeout for better GPS fix
+        forceAndroidLocationManager: false, // Use Google Play Services (more accurate)
       );
+      
+      print('📍 Registration - Location accuracy: ${position.accuracy}m');
 
       setState(() {
         _latitude = position.latitude;
@@ -186,9 +190,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.indigo[700]!,
-              Colors.indigo[500]!,
-              Colors.blue[400]!,
+              AppColors.primary,
+              AppColors.primary.withOpacity(0.8),
+              AppColors.primary.withOpacity(0.6),
             ],
           ),
         ),
@@ -333,7 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       ? null
                                       : _handleRegister,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.indigo[600],
+                                    backgroundColor: AppColors.primary,
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets.symmetric(
                                       vertical: 14,
@@ -342,7 +346,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       borderRadius: BorderRadius.circular(16),
                                     ),
                                     elevation: 3,
-                                    shadowColor: Colors.indigo.withOpacity(0.5),
+                                    shadowColor: AppColors.primary.withOpacity(0.5),
                                   ),
                                   child: _isLoading
                                       ? const SizedBox(
@@ -426,7 +430,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        prefixIcon: Icon(icon, color: Colors.indigo[400]),
+        prefixIcon: Icon(icon, color: AppColors.primary.withOpacity(0.7)),
         filled: true,
         fillColor: Colors.grey[50],
         border: OutlineInputBorder(
@@ -439,7 +443,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.indigo[400]!, width: 2),
+          borderSide: BorderSide(color: AppColors.primary, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
@@ -466,7 +470,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: InputDecoration(
         labelText: 'Password',
         hintText: 'Create a password',
-        prefixIcon: Icon(Icons.lock_outlined, color: Colors.indigo[400]),
+        prefixIcon: Icon(Icons.lock_outlined, color: AppColors.primary.withOpacity(0.7)),
         suffixIcon: IconButton(
           icon: Icon(
             _obscurePassword
@@ -492,7 +496,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.indigo[400]!, width: 2),
+          borderSide: BorderSide(color: AppColors.primary, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
@@ -523,15 +527,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.indigo[50],
+        color: AppColors.primary.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.indigo[100]!, width: 1),
+        border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 1),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Icon(Icons.location_on, color: Colors.indigo[600], size: 20),
+              Icon(Icons.location_on, color: AppColors.primary, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -588,7 +592,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo[600],
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 shape: RoundedRectangleBorder(

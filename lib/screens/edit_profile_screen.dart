@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:driver_cerca/models/driver_model.dart';
 import 'package:driver_cerca/providers/auth_provider.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:provider/provider.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -71,9 +72,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const Icon(Icons.error, color: Colors.white),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    authProvider.error ?? 'Failed to update profile',
-                  ),
+                  child: Text(authProvider.error ?? 'Failed to update profile'),
                 ),
               ],
             ),
@@ -99,7 +98,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Edit Profile'),
-        backgroundColor: Colors.indigo[600],
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           Consumer<AuthProvider>(
@@ -127,7 +126,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.indigo[50]!, Colors.white],
+            colors: [AppColors.primary.withOpacity(0.1), Colors.white],
           ),
         ),
         child: Form(
@@ -160,7 +159,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           labelText: 'Full Name',
                           prefixIcon: Icon(
                             Icons.person_outline,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -168,7 +167,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -191,7 +190,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           labelText: 'Email',
                           prefixIcon: Icon(
                             Icons.email_outlined,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -199,7 +198,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -224,7 +223,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           labelText: 'Phone Number',
                           prefixIcon: Icon(
                             Icons.phone_outlined,
-                            color: Colors.indigo[400],
+                            color: AppColors.primary.withOpacity(0.7),
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -232,7 +231,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide(
-                              color: Colors.indigo[400]!,
+                              color: AppColors.primary,
                               width: 2,
                             ),
                           ),
@@ -257,7 +256,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   return ElevatedButton(
                     onPressed: authProvider.isLoading ? null : _handleSave,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.indigo[600],
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(

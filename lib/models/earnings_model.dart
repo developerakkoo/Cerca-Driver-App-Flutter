@@ -9,6 +9,18 @@ class EarningsModel {
   final DateTime? startDate;
   final DateTime? endDate;
   final List<EarningBreakdown>? breakdown;
+  final List<EarningBreakdown>? dailyBreakdown;
+  final List<EarningBreakdown>? weeklyBreakdown;
+  final List<EarningBreakdown>? monthlyBreakdown;
+  // Payment status fields
+  final double totalPendingEarnings;
+  final double totalCompletedEarnings;
+  final int pendingEarningsCount;
+  final int completedEarningsCount;
+  final List<RecentRideEarning>? recentRides;
+  // Tips and bonuses
+  final double totalTips;
+  final double totalBonuses;
 
   EarningsModel({
     required this.totalEarnings,
@@ -20,23 +32,93 @@ class EarningsModel {
     this.startDate,
     this.endDate,
     this.breakdown,
+    this.dailyBreakdown,
+    this.weeklyBreakdown,
+    this.monthlyBreakdown,
+    this.totalPendingEarnings = 0,
+    this.totalCompletedEarnings = 0,
+    this.pendingEarningsCount = 0,
+    this.completedEarningsCount = 0,
+    this.recentRides,
+    this.totalTips = 0,
+    this.totalBonuses = 0,
   });
 
   factory EarningsModel.fromJson(Map<String, dynamic> json) {
+    // Handle nested data structure from API
+    final data = json['data'] ?? json;
+    final summary = data['summary'] ?? {};
+
     return EarningsModel(
-      totalEarnings: (json['totalEarnings'] ?? 0).toDouble(),
-      grossEarnings: (json['grossEarnings'] ?? 0).toDouble(),
-      platformFees: (json['platformFees'] ?? 0).toDouble(),
-      netEarnings: (json['netEarnings'] ?? 0).toDouble(),
-      totalRides: json['totalRides'] ?? 0,
-      averagePerRide: (json['averagePerRide'] ?? 0).toDouble(),
-      startDate: json['startDate'] != null
-          ? DateTime.parse(json['startDate'])
-          : null,
-      endDate: json['endDate'] != null ? DateTime.parse(json['endDate']) : null,
-      breakdown: json['breakdown'] != null
-          ? (json['breakdown'] as List)
+      totalEarnings:
+          (summary['netEarnings'] ??
+                  summary['totalEarnings'] ??
+                  json['totalEarnings'] ??
+                  0)
+              .toDouble(),
+      grossEarnings:
+          (summary['totalGrossEarnings'] ??
+                  summary['grossEarnings'] ??
+                  json['grossEarnings'] ??
+                  0)
+              .toDouble(),
+      platformFees:
+          (summary['totalPlatformFees'] ??
+                  summary['platformFees'] ??
+                  json['platformFees'] ??
+                  0)
+              .toDouble(),
+      netEarnings: (summary['netEarnings'] ?? json['netEarnings'] ?? 0)
+          .toDouble(),
+      totalRides: summary['totalRides'] ?? json['totalRides'] ?? 0,
+      averagePerRide:
+          (summary['averageNetPerRide'] ??
+                  summary['averagePerRide'] ??
+                  json['averagePerRide'] ??
+                  0)
+              .toDouble(),
+      startDate: data['period']?['start'] != null
+          ? DateTime.parse(data['period']['start'])
+          : (json['startDate'] != null
+                ? DateTime.parse(json['startDate'])
+                : null),
+      endDate: data['period']?['end'] != null
+          ? DateTime.parse(data['period']['end'])
+          : (json['endDate'] != null ? DateTime.parse(json['endDate']) : null),
+      breakdown: data['breakdown'] != null
+          ? (data['breakdown']['daily'] as List?)
+                ?.map((e) => EarningBreakdown.fromJson(e))
+                .toList()
+          : (json['breakdown'] != null
+                ? (json['breakdown'] as List)
+                      .map((e) => EarningBreakdown.fromJson(e))
+                      .toList()
+                : null),
+      totalPendingEarnings: (summary['totalPendingEarnings'] ?? 0).toDouble(),
+      totalCompletedEarnings: (summary['totalCompletedEarnings'] ?? 0)
+          .toDouble(),
+      pendingEarningsCount: summary['pendingEarningsCount'] ?? 0,
+      completedEarningsCount: summary['completedEarningsCount'] ?? 0,
+      totalTips: (summary['totalTips'] ?? 0).toDouble(),
+      totalBonuses: (summary['totalBonuses'] ?? 0).toDouble(),
+      dailyBreakdown: data['breakdown']?['daily'] != null
+          ? (data['breakdown']['daily'] as List)
                 .map((e) => EarningBreakdown.fromJson(e))
+                .toList()
+          : null,
+      weeklyBreakdown: data['breakdown']?['weekly'] != null
+          ? (data['breakdown']['weekly'] as List)
+                .map((e) => EarningBreakdown.fromJson(e))
+                .toList()
+          : null,
+      monthlyBreakdown: data['breakdown']?['monthly'] != null
+          ? (data['breakdown']['monthly'] as List)
+                .map((e) => EarningBreakdown.fromJson(e))
+                .toList()
+          : null,
+      recentRides: data['recentRides'] != null
+          ? (data['recentRides'] as List)
+                .map((e) => RecentRideEarning.fromJson(e))
                 .toList()
           : null,
     );
@@ -53,6 +135,11 @@ class EarningsModel {
       'startDate': startDate?.toIso8601String(),
       'endDate': endDate?.toIso8601String(),
       'breakdown': breakdown?.map((e) => e.toJson()).toList(),
+      'totalPendingEarnings': totalPendingEarnings,
+      'totalCompletedEarnings': totalCompletedEarnings,
+      'pendingEarningsCount': pendingEarningsCount,
+      'completedEarningsCount': completedEarningsCount,
+      'recentRides': recentRides?.map((e) => e.toJson()).toList(),
     };
   }
 
@@ -61,28 +148,117 @@ class EarningsModel {
       'EarningsModel(net: ₹$netEarnings, rides: $totalRides, avg: ₹$averagePerRide)';
 }
 
-/// Daily/weekly earnings breakdown
+/// Daily/weekly/monthly earnings breakdown
 class EarningBreakdown {
-  final String date;
+  final String date; // date, weekStart, or month
   final double earnings;
   final int ridesCount;
+  final double grossEarnings;
+  final double driverEarnings;
+  final double tips;
+  final double netEarnings;
 
   EarningBreakdown({
     required this.date,
     required this.earnings,
     required this.ridesCount,
+    this.grossEarnings = 0,
+    this.driverEarnings = 0,
+    this.tips = 0,
+    this.netEarnings = 0,
   });
 
   factory EarningBreakdown.fromJson(Map<String, dynamic> json) {
     return EarningBreakdown(
-      date: json['date'] ?? json['_id'] ?? '',
-      earnings: (json['earnings'] ?? json['totalEarnings'] ?? 0).toDouble(),
-      ridesCount: json['ridesCount'] ?? json['count'] ?? 0,
+      date:
+          json['date'] ??
+          json['weekStart'] ??
+          json['month'] ??
+          json['_id'] ??
+          '',
+      earnings:
+          (json['netEarnings'] ??
+                  json['earnings'] ??
+                  json['totalEarnings'] ??
+                  0)
+              .toDouble(),
+      ridesCount: json['rides'] ?? json['ridesCount'] ?? json['count'] ?? 0,
+      grossEarnings: (json['grossEarnings'] ?? 0).toDouble(),
+      driverEarnings: (json['driverEarnings'] ?? 0).toDouble(),
+      tips: (json['tips'] ?? 0).toDouble(),
+      netEarnings: (json['netEarnings'] ?? json['earnings'] ?? 0).toDouble(),
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {'date': date, 'earnings': earnings, 'ridesCount': ridesCount};
+    return {
+      'date': date,
+      'earnings': earnings,
+      'ridesCount': ridesCount,
+      'grossEarnings': grossEarnings,
+      'driverEarnings': driverEarnings,
+      'tips': tips,
+      'netEarnings': netEarnings,
+    };
+  }
+}
+
+/// Recent ride earning with payment status
+class RecentRideEarning {
+  final String? rideId;
+  final DateTime date;
+  final double grossFare;
+  final double driverEarning;
+  final double platformFee;
+  final double tips;
+  final PaymentStatus paymentStatus;
+  final String? pickupAddress;
+  final String? dropoffAddress;
+  final String? riderName;
+
+  RecentRideEarning({
+    this.rideId,
+    required this.date,
+    required this.grossFare,
+    required this.driverEarning,
+    required this.platformFee,
+    this.tips = 0,
+    required this.paymentStatus,
+    this.pickupAddress,
+    this.dropoffAddress,
+    this.riderName,
+  });
+
+  factory RecentRideEarning.fromJson(Map<String, dynamic> json) {
+    return RecentRideEarning(
+      rideId: json['rideId']?.toString(),
+      date: json['date'] != null
+          ? DateTime.parse(json['date'])
+          : DateTime.now(),
+      grossFare: (json['grossFare'] ?? 0).toDouble(),
+      driverEarning: (json['driverEarning'] ?? 0).toDouble(),
+      platformFee: (json['platformFee'] ?? 0).toDouble(),
+      tips: (json['tips'] ?? 0).toDouble(),
+      paymentStatus: PaymentStatus.fromString(json['paymentStatus']),
+      pickupAddress: json['pickupAddress'],
+      dropoffAddress: json['dropoffAddress'],
+      riderName: json['rider']?['name'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'rideId': rideId,
+      'date': date.toIso8601String(),
+      'grossFare': grossFare,
+      'driverEarning': driverEarning,
+      'platformFee': platformFee,
+      'tips': tips,
+      'paymentStatus': paymentStatus.value,
+      'pickupAddress': pickupAddress,
+      'dropoffAddress': dropoffAddress,
+      'riderName': riderName,
+    };
   }
 }
 
@@ -151,6 +327,32 @@ class DriverStats {
   @override
   String toString() =>
       'DriverStats(rides: $totalRides, earnings: ₹$totalEarnings, rating: $averageRating⭐)';
+}
+
+/// Payment status enum
+enum PaymentStatus {
+  pending('pending'),
+  completed('completed'),
+  failed('failed'),
+  refunded('refunded');
+
+  final String value;
+  const PaymentStatus(this.value);
+
+  static PaymentStatus fromString(String? value) {
+    switch (value?.toLowerCase()) {
+      case 'pending':
+        return PaymentStatus.pending;
+      case 'completed':
+        return PaymentStatus.completed;
+      case 'failed':
+        return PaymentStatus.failed;
+      case 'refunded':
+        return PaymentStatus.refunded;
+      default:
+        return PaymentStatus.pending;
+    }
+  }
 }
 
 /// Date range filter enum

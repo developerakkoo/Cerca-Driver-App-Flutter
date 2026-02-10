@@ -4,7 +4,9 @@ import 'package:driver_cerca/services/overlay_service.dart';
 import 'package:driver_cerca/providers/auth_provider.dart';
 import 'package:driver_cerca/screens/main_navigation_screen.dart';
 import 'package:driver_cerca/screens/register_screen.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,6 +27,25 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     // Removed auto-login to show login page
+
+    // Close any active overlay when login screen appears
+    // This prevents sounds from playing from stale overlays
+    _closeAnyActiveOverlay();
+  }
+
+  /// Close any active overlay to prevent sounds from stale overlays
+  Future<void> _closeAnyActiveOverlay() async {
+    try {
+      final isActive = await FlutterOverlayWindow.isActive();
+      if (isActive) {
+        print('🔒 Closing active overlay on login screen');
+        await OverlayService.closeOverlay();
+        print('✅ Overlay closed successfully');
+      }
+    } catch (e) {
+      print('⚠️ Error checking/closing overlay: $e');
+      // Don't throw - gracefully handle if overlay check fails
+    }
   }
 
   @override
@@ -168,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Ride request overlay displayed successfully!'),
-        backgroundColor: Colors.blue,
+        backgroundColor: AppColors.primary,
       ),
     );
   }
@@ -184,9 +205,9 @@ class _LoginScreenState extends State<LoginScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Colors.indigo[700]!,
-              Colors.indigo[500]!,
-              Colors.blue[400]!,
+              AppColors.primary,
+              AppColors.primary.withOpacity(0.8),
+              AppColors.primary.withOpacity(0.6),
             ],
           ),
         ),
@@ -220,10 +241,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ],
                               ),
-                              child: Icon(
-                                Icons.local_taxi_rounded,
-                                size: 50,
-                                color: Colors.indigo[700],
+                              child: ClipOval(
+                                child: Image.asset(
+                                  'assets/icon/icon.png',
+                                  width: 70,
+                                  height: 70,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    // Fallback to icon if image fails to load
+                                    return Icon(
+                                      Icons.local_taxi_rounded,
+                                      size: 50,
+                                      color: AppColors.primary,
+                                    );
+                                  },
+                                ),
                               ),
                             ),
                             const SizedBox(height: 32),
@@ -299,7 +331,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                         hintText: 'Enter your email',
                                         prefixIcon: Icon(
                                           Icons.email_outlined,
-                                          color: Colors.indigo[400],
+                                          color: AppColors.primary.withOpacity(
+                                            0.7,
+                                          ),
                                         ),
                                         filled: true,
                                         fillColor: Colors.grey[50],
@@ -323,7 +357,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             16,
                                           ),
                                           borderSide: BorderSide(
-                                            color: Colors.indigo[400]!,
+                                            color: AppColors.primary,
                                             width: 2,
                                           ),
                                         ),
@@ -375,7 +409,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                         hintText: 'Enter your password',
                                         prefixIcon: Icon(
                                           Icons.lock_outlined,
-                                          color: Colors.indigo[400],
+                                          color: AppColors.primary.withOpacity(
+                                            0.7,
+                                          ),
                                         ),
                                         suffixIcon: IconButton(
                                           icon: Icon(
@@ -413,7 +449,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             16,
                                           ),
                                           borderSide: BorderSide(
-                                            color: Colors.indigo[400]!,
+                                            color: AppColors.primary,
                                             width: 2,
                                           ),
                                         ),
@@ -461,7 +497,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                               ? null
                                               : _handleLogin,
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.indigo[600],
+                                            backgroundColor: AppColors.primary,
                                             foregroundColor: Colors.white,
                                             padding: const EdgeInsets.symmetric(
                                               vertical: 18,
@@ -471,7 +507,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                                   BorderRadius.circular(16),
                                             ),
                                             elevation: 3,
-                                            shadowColor: Colors.indigo
+                                            shadowColor: AppColors.primary
                                                 .withOpacity(0.5),
                                           ),
                                           child: authProvider.isLoading
@@ -504,31 +540,31 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 24),
 
                             // Test Overlay Button
-                            TextButton.icon(
-                              onPressed: _testOverlay,
-                              icon: Icon(
-                                Icons.science_outlined,
-                                color: Colors.white,
-                              ),
-                              label: const Text(
-                                'Test Ride Request Overlay',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              style: TextButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 12,
-                                ),
-                                backgroundColor: Colors.white.withOpacity(0.2),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
+                            // TextButton.icon(
+                            //   onPressed: _testOverlay,
+                            //   icon: Icon(
+                            //     Icons.science_outlined,
+                            //     color: Colors.white,
+                            //   ),
+                            //   label: const Text(
+                            //     'Test Ride Request Overlay',
+                            //     style: TextStyle(
+                            //       color: Colors.white,
+                            //       fontSize: 14,
+                            //       fontWeight: FontWeight.w500,
+                            //     ),
+                            //   ),
+                            //   style: TextButton.styleFrom(
+                            //     padding: const EdgeInsets.symmetric(
+                            //       horizontal: 20,
+                            //       vertical: 12,
+                            //     ),
+                            //     backgroundColor: Colors.white.withOpacity(0.2),
+                            //     shape: RoundedRectangleBorder(
+                            //       borderRadius: BorderRadius.circular(12),
+                            //     ),
+                            //   ),
+                            // ),
                             const SizedBox(height: 16),
 
                             // Register Link

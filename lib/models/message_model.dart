@@ -26,11 +26,36 @@ class MessageModel {
   });
 
   factory MessageModel.fromJson(Map<String, dynamic> json) {
+    // Handle ride ID - backend sends 'ride' as ObjectId or populated object
+    String rideId = '';
+    if (json['ride'] != null) {
+      if (json['ride'] is String) {
+        rideId = json['ride'];
+      } else if (json['ride'] is Map && json['ride']['_id'] != null) {
+        rideId = json['ride']['_id'].toString();
+      }
+    }
+    rideId = rideId.isEmpty ? (json['rideId'] ?? '') : rideId;
+
+    // Handle sender - backend sends populated object with _id, name, fullName and senderModel
+    final senderModelStr = json['senderModel'] ?? '';
+    final senderRole = senderModelStr == 'Driver' ? SenderRole.driver : SenderRole.rider;
+    final senderId = json['sender'] is Map 
+        ? (json['sender']['_id'] ?? json['sender']['id'] ?? '').toString()
+        : json['sender']?.toString() ?? '';
+
+    // Handle receiver - backend sends populated object with _id, name, fullName and receiverModel
+    final receiverModelStr = json['receiverModel'] ?? '';
+    final receiverRole = receiverModelStr == 'Driver' ? ReceiverRole.driver : ReceiverRole.rider;
+    final receiverId = json['receiver'] is Map
+        ? (json['receiver']['_id'] ?? json['receiver']['id'] ?? '').toString()
+        : json['receiver']?.toString() ?? '';
+
     return MessageModel(
       id: json['_id'] ?? json['id'] ?? '',
-      rideId: json['rideId'] ?? '',
-      sender: SenderInfo.fromJson(json['sender'] ?? {}),
-      receiver: ReceiverInfo.fromJson(json['receiver'] ?? {}),
+      rideId: rideId,
+      sender: SenderInfo(id: senderId, role: senderRole),
+      receiver: ReceiverInfo(id: receiverId, role: receiverRole),
       message: json['message'] ?? '',
       messageType: _parseMessageType(json['messageType']),
       isRead: json['isRead'] ?? false,

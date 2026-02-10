@@ -6,6 +6,7 @@ import 'package:driver_cerca/screens/profile_screen.dart';
 import 'package:driver_cerca/screens/active_ride_screen.dart';
 import 'package:driver_cerca/services/socket_service.dart';
 import 'package:driver_cerca/providers/socket_provider.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -38,31 +39,44 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     // Register global callback for ride accepted from overlay
     // This ensures navigation works even when app is in background
     SocketService.onRideAccepted = (ride) {
-      print(
-        '🚀 [MainNav] Navigating to ActiveRideScreen from overlay acceptance',
-      );
+      print('🚀 [MainNav] Ride accepted callback triggered');
       print('   Ride ID: ${ride.id}');
+      print('   Booking Type: ${ride.bookingType?.displayName ?? "INSTANT"}');
 
-      // Switch to Rides tab
-      if (mounted) {
-        setState(() {
-          _currentIndex = 1; // Index 1 is Rides tab
-        });
+      // Check if this is a Full Day booking
+      final isFullDayBooking = ride.isFullDayBooking();
 
-        // Navigate to active ride screen
-        Future.delayed(const Duration(milliseconds: 200), () {
-          if (mounted) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ActiveRideScreen(ride: ride),
-              ),
-            );
-          }
-        });
+      if (isFullDayBooking) {
+        // For Full Day bookings: Don't navigate, just show toast
+        print(
+          '📅 Full Day booking accepted - not navigating to active ride screen',
+        );
+        // The booking will appear in Upcoming Bookings screen automatically
+      } else {
+        // For instant rides: Navigate to active ride screen
+        print('🚗 Instant ride accepted - navigating to ActiveRideScreen');
+
+        // Switch to Rides tab
+        if (mounted) {
+          setState(() {
+            _currentIndex = 1; // Index 1 is Rides tab
+          });
+
+          // Navigate to active ride screen
+          Future.delayed(const Duration(milliseconds: 200), () {
+            if (mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ActiveRideScreen(ride: ride),
+                ),
+              );
+            }
+          });
+        }
       }
 
-      print('✅ Navigation command sent');
+      print('✅ Ride accepted handling completed');
     };
 
     // Check if there's a pending accepted ride from background
@@ -74,7 +88,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   /// Initialize SocketProvider and sync driver status after login
   Future<void> _initializeAfterLogin() async {
     print('🚀 [MainNav] Starting post-login initialization...');
-    
+
     try {
       final socketProvider = Provider.of<SocketProvider>(
         context,
@@ -105,20 +119,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       // Step 3: Load saved driver status from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       final savedIsOnline = prefs.getBool('driver_is_online') ?? false;
-      print('💾 [MainNav] Loaded saved driver status: ${savedIsOnline ? "ONLINE" : "OFFLINE"}');
+      print(
+        '💾 [MainNav] Loaded saved driver status: ${savedIsOnline ? "ONLINE" : "OFFLINE"}',
+      );
 
       // Step 4: Sync driver status with SocketProvider
       if (socketProvider.isDriverOnline != savedIsOnline) {
         print('🔄 [MainNav] Syncing driver status with SocketProvider...');
         socketProvider.setDriverOnline(savedIsOnline);
-        print('✅ [MainNav] Driver status synced: ${savedIsOnline ? "ONLINE" : "OFFLINE"}');
+        print(
+          '✅ [MainNav] Driver status synced: ${savedIsOnline ? "ONLINE" : "OFFLINE"}',
+        );
       } else {
         print('✅ [MainNav] Driver status already in sync');
       }
 
       // Step 5: If driver was online, ensure socket is connected
       if (savedIsOnline && !socketProvider.isConnected) {
-        print('⚠️ [MainNav] Driver was online but socket disconnected, reconnecting...');
+        print(
+          '⚠️ [MainNav] Driver was online but socket disconnected, reconnecting...',
+        );
         await socketProvider.connect();
       }
 
@@ -134,28 +154,44 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void _checkPendingAcceptedRide() {
     final acceptedRide = SocketService.getAcceptedRideForNavigation();
     if (acceptedRide != null) {
-      print('📱 Found pending accepted ride, navigating now...');
+      print('📱 Found pending accepted ride, checking type...');
       print('   Ride ID: ${acceptedRide.id}');
+      print(
+        '   Booking Type: ${acceptedRide.bookingType?.displayName ?? "INSTANT"}',
+      );
+
+      // Check if this is a Full Day booking
+      final isFullDayBooking = acceptedRide.isFullDayBooking();
 
       // Clear it first
       SocketService.clearAcceptedRideForNavigation();
 
-      // Switch to Rides tab first
-      setState(() {
-        _currentIndex = 1; // Index 1 is Rides tab
-      });
+      if (isFullDayBooking) {
+        // For Full Day bookings: Don't navigate
+        print(
+          '📅 Full Day booking - not navigating, will appear in Upcoming Bookings',
+        );
+      } else {
+        // For instant rides: Navigate to active ride screen
+        print('🚗 Instant ride - navigating to ActiveRideScreen');
 
-      // Then navigate to active ride screen after a short delay
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ActiveRideScreen(ride: acceptedRide),
-            ),
-          );
-        }
-      });
+        // Switch to Rides tab first
+        setState(() {
+          _currentIndex = 1; // Index 1 is Rides tab
+        });
+
+        // Then navigate to active ride screen after a short delay
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ActiveRideScreen(ride: acceptedRide),
+              ),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -182,7 +218,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           },
           type: BottomNavigationBarType.fixed,
           backgroundColor: Colors.white,
-          selectedItemColor: Colors.indigo[600],
+          selectedItemColor: AppColors.primary,
           unselectedItemColor: Colors.grey[600],
           selectedFontSize: 12,
           unselectedFontSize: 12,

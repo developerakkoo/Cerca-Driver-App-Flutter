@@ -1,25 +1,42 @@
 import 'package:flutter/foundation.dart';
-import 'package:driver_cerca/models/earnings_model.dart';
+import 'package:driver_cerca/models/earnings_model.dart' as earnings_model;
 import 'package:driver_cerca/services/earnings_service.dart';
+import 'package:driver_cerca/services/socket_service.dart';
 
 /// EarningsProvider manages earnings and statistics state
 class EarningsProvider extends ChangeNotifier {
-  EarningsModel? _earnings;
-  DriverStats? _stats;
+  earnings_model.EarningsModel? _earnings;
+  earnings_model.DriverStats? _stats;
   bool _isLoading = false;
   String? _error;
 
   // Getters
-  EarningsModel? get earnings => _earnings;
-  DriverStats? get stats => _stats;
+  earnings_model.EarningsModel? get earnings => _earnings;
+  earnings_model.DriverStats? get stats => _stats;
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  // Payment status getters
+  double get totalPendingEarnings => _earnings?.totalPendingEarnings ?? 0;
+  double get totalCompletedEarnings => _earnings?.totalCompletedEarnings ?? 0;
+  int get pendingEarningsCount => _earnings?.pendingEarningsCount ?? 0;
+  int get completedEarningsCount => _earnings?.completedEarningsCount ?? 0;
+  
+  // Filter recent rides by payment status
+  List<earnings_model.RecentRideEarning> getRecentRidesByStatus(earnings_model.PaymentStatus? status) {
+    if (_earnings?.recentRides == null) return [];
+    if (status == null) return _earnings!.recentRides!;
+    return _earnings!.recentRides!
+        .where((ride) => ride.paymentStatus == status)
+        .toList();
+  }
 
   /// Fetch driver earnings with optional date range
   Future<void> fetchEarnings({
     required String driverId,
     DateTime? startDate,
     DateTime? endDate,
+    String? period,
   }) async {
     _setLoading(true);
     _clearError();
@@ -29,6 +46,7 @@ class EarningsProvider extends ChangeNotifier {
         driverId: driverId,
         startDate: startDate,
         endDate: endDate,
+        period: period,
       );
 
       _earnings = earningsData;
@@ -61,6 +79,7 @@ class EarningsProvider extends ChangeNotifier {
     required String driverId,
     DateTime? startDate,
     DateTime? endDate,
+    String? period,
   }) async {
     _setLoading(true);
     _clearError();
@@ -71,6 +90,7 @@ class EarningsProvider extends ChangeNotifier {
           driverId: driverId,
           startDate: startDate,
           endDate: endDate,
+          period: period,
         ),
         fetchStats(driverId),
       ]);
@@ -84,6 +104,27 @@ class EarningsProvider extends ChangeNotifier {
   /// Clear error state
   void clearError() {
     _clearError();
+  }
+
+  /// Register socket listener for real-time earnings updates
+  void registerEarningsSocketListener({
+    required String driverId,
+    required Future<void> Function() onRefresh,
+    Function(double)? onNotify,
+  }) {
+    SocketService.onDriverEarningAdded = (data) {
+      final eventDriverId = data['driverId']?.toString();
+      if (eventDriverId != null && eventDriverId != driverId) return;
+
+      final earningAmount = (data['driverEarning'] is num)
+          ? (data['driverEarning'] as num).toDouble()
+          : 0.0;
+
+      onRefresh();
+      if (onNotify != null) {
+        onNotify(earningAmount);
+      }
+    };
   }
 
   // Private helper methods

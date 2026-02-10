@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/services/ride_service.dart';
 import 'package:driver_cerca/services/storage_service.dart';
+import 'package:driver_cerca/services/message_service.dart';
+import 'package:driver_cerca/services/socket_service.dart';
 import 'package:driver_cerca/screens/active_ride_screen.dart';
+import 'package:driver_cerca/constants/constants.dart';
 
 /// RidesScreen displays all rides for the driver
 /// Shows active and completed rides with filters
@@ -20,12 +23,27 @@ class _RidesScreenState extends State<RidesScreen>
   List<RideModel> _completedRides = [];
   bool _isLoading = false;
   String? _driverId;
+  Map<String, int> _unreadCounts = {}; // Map of rideId -> unread count
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadDriverId();
+    _setupUnreadCountListener();
+  }
+
+  void _setupUnreadCountListener() {
+    SocketService.onUnreadCountUpdated = (data) {
+      final rideId = data['rideId'] as String?;
+      final unreadCount = data['unreadCount'] as int? ?? 0;
+      
+      if (rideId != null && mounted) {
+        setState(() {
+          _unreadCounts[rideId] = unreadCount;
+        });
+      }
+    };
   }
 
   Future<void> _loadDriverId() async {
@@ -62,6 +80,9 @@ class _RidesScreenState extends State<RidesScreen>
             )
             .toList();
       });
+
+      // Load unread counts for all rides
+      _loadUnreadCounts();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -73,9 +94,28 @@ class _RidesScreenState extends State<RidesScreen>
     }
   }
 
+  Future<void> _loadUnreadCounts() async {
+    if (_driverId == null) return;
+    
+    final allRides = [..._activeRides, ..._completedRides];
+    for (var ride in allRides) {
+      try {
+        final count = await MessageService.getUnreadCountForRide(ride.id, _driverId!);
+        if (mounted) {
+          setState(() {
+            _unreadCounts[ride.id] = count;
+          });
+        }
+      } catch (e) {
+        print('❌ Error loading unread count for ride ${ride.id}: $e');
+      }
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
+    SocketService.onUnreadCountUpdated = null;
     super.dispose();
   }
 
@@ -84,7 +124,7 @@ class _RidesScreenState extends State<RidesScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Rides'),
-        backgroundColor: Colors.indigo,
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadRides),
@@ -175,36 +215,58 @@ class _RidesScreenState extends State<RidesScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Status badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: statusColor),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _getStatusIcon(ride.status),
-                          size: 16,
-                          color: statusColor,
+                  // Status badge with unread count badge
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          ride.status.displayName,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: statusColor),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _getStatusIcon(ride.status),
+                              size: 16,
+                              color: statusColor,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              ride.status.displayName,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Unread message badge
+                      if (_unreadCounts[ride.id] != null && _unreadCounts[ride.id]! > 0)
+                        Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          padding: const EdgeInsets.all(6),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '${_unreadCounts[ride.id]}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
                   // Fare
                   Text(
@@ -225,11 +287,11 @@ class _RidesScreenState extends State<RidesScreen>
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      backgroundColor: Colors.indigo.shade100,
+                      backgroundColor: AppColors.primary.withOpacity(0.1),
                       child: Text(
                         ride.rider!.fullName[0].toUpperCase(),
                         style: TextStyle(
-                          color: Colors.indigo.shade700,
+                          color: AppColors.primary,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -339,9 +401,9 @@ class _RidesScreenState extends State<RidesScreen>
                   label: Text(isActive ? 'View Active Ride' : 'View Details'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isActive
-                        ? Colors.indigo
-                        : Colors.indigo.shade100,
-                    foregroundColor: isActive ? Colors.white : Colors.indigo,
+                        ? AppColors.primary
+                        : AppColors.primary.withOpacity(0.1),
+                    foregroundColor: isActive ? Colors.white : AppColors.primary,
                   ),
                 ),
               ),
@@ -486,7 +548,7 @@ class _RidesScreenState extends State<RidesScreen>
     switch (status) {
       case RideStatus.requested:
       case RideStatus.pending:
-        return Colors.blue;
+        return AppColors.primary;
       case RideStatus.accepted:
         return Colors.orange;
       case RideStatus.arrived:

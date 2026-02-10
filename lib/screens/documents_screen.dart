@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:driver_cerca/models/driver_model.dart';
 import 'package:driver_cerca/services/auth_service.dart';
+import 'package:driver_cerca/constants/constants.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DocumentsScreen extends StatefulWidget {
   final DriverModel driver;
@@ -55,12 +57,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.camera_alt, color: Colors.indigo),
+                leading: const Icon(Icons.camera_alt, color: AppColors.primary),
                 title: const Text('Camera'),
                 onTap: () => Navigator.pop(context, ImageSource.camera),
               ),
               ListTile(
-                leading: const Icon(Icons.photo_library, color: Colors.indigo),
+                leading: const Icon(
+                  Icons.photo_library,
+                  color: AppColors.primary,
+                ),
                 title: const Text('Gallery'),
                 onTap: () => Navigator.pop(context, ImageSource.gallery),
               ),
@@ -157,7 +162,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Documents'),
-        backgroundColor: Colors.indigo[600],
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
       ),
       body: Container(
@@ -165,7 +170,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.indigo[50]!, Colors.white],
+            colors: [AppColors.primary.withOpacity(0.1), Colors.white],
           ),
         ),
         child: ListView(
@@ -216,10 +221,23 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                       style: TextStyle(color: Colors.green[600]),
                     ),
                     trailing: IconButton(
-                      icon: Icon(Icons.visibility, color: Colors.indigo[600]),
-                      onPressed: () {
-                        // TODO: Open document viewer
-                        _showErrorSnackBar('Document viewing coming soon');
+                      icon: Icon(Icons.visibility, color: AppColors.primary),
+                      onPressed: () async {
+                        final documentUrl = widget.driver.documents[index];
+                        if (documentUrl.isNotEmpty) {
+                          try {
+                            final uri = Uri.parse(documentUrl);
+                            if (await canLaunchUrl(uri)) {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            } else {
+                              _showErrorSnackBar('Cannot open document URL');
+                            }
+                          } catch (e) {
+                            _showErrorSnackBar('Error opening document: $e');
+                          }
+                        } else {
+                          _showErrorSnackBar('Document URL not available');
+                        }
                       },
                     ),
                   ),
@@ -319,8 +337,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.indigo[600],
-                side: BorderSide(color: Colors.indigo[600]!, width: 2),
+                foregroundColor: AppColors.primary,
+                side: BorderSide(color: AppColors.primary, width: 2),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -331,7 +349,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
             // Info Card
             Card(
-              color: Colors.blue[50],
+              color: AppColors.primary.withOpacity(0.1),
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -340,12 +358,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, color: Colors.blue[700]),
+                    Icon(Icons.info_outline, color: AppColors.primary),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         'Upload clear photos of your Aadhar Card and Driving License for verification',
-                        style: TextStyle(color: Colors.blue[900], fontSize: 12),
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],

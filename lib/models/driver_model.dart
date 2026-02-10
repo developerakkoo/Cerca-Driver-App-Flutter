@@ -13,6 +13,7 @@ class DriverModel {
   final double rating;
   final int totalRatings;
   final double totalEarnings;
+  final int completedRidesCount;
   final VehicleInfo? vehicleInfo;
   final DateTime? lastSeen;
   final List<String> documents;
@@ -34,6 +35,7 @@ class DriverModel {
     this.rating = 0.0,
     this.totalRatings = 0,
     this.totalEarnings = 0.0,
+    this.completedRidesCount = 0,
     this.vehicleInfo,
     this.lastSeen,
     this.documents = const [],
@@ -59,6 +61,7 @@ class DriverModel {
       rating: (json['rating'] ?? 0).toDouble(),
       totalRatings: json['totalRatings'] ?? 0,
       totalEarnings: (json['totalEarnings'] ?? 0).toDouble(),
+      completedRidesCount: json['completedRidesCount'] ?? 0,
       vehicleInfo: json['vehicleInfo'] != null
           ? VehicleInfo.fromJson(json['vehicleInfo'])
           : null,
@@ -97,6 +100,7 @@ class DriverModel {
       'rating': rating,
       'totalRatings': totalRatings,
       'totalEarnings': totalEarnings,
+      'completedRidesCount': completedRidesCount,
       'vehicleInfo': vehicleInfo?.toJson(),
       'lastSeen': lastSeen?.toIso8601String(),
       'documents': documents,
@@ -120,6 +124,7 @@ class DriverModel {
     double? rating,
     int? totalRatings,
     double? totalEarnings,
+    int? completedRidesCount,
     VehicleInfo? vehicleInfo,
     DateTime? lastSeen,
     List<String>? documents,
@@ -141,6 +146,7 @@ class DriverModel {
       rating: rating ?? this.rating,
       totalRatings: totalRatings ?? this.totalRatings,
       totalEarnings: totalEarnings ?? this.totalEarnings,
+      completedRidesCount: completedRidesCount ?? this.completedRidesCount,
       vehicleInfo: vehicleInfo ?? this.vehicleInfo,
       lastSeen: lastSeen ?? this.lastSeen,
       documents: documents ?? this.documents,

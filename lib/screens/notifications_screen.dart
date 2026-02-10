@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:driver_cerca/models/notification_model.dart';
 import 'package:driver_cerca/services/socket_service.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:intl/intl.dart';
 
 /// NotificationsScreen displays all notifications for the driver
@@ -72,7 +73,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notifications'),
-        backgroundColor: Colors.indigo,
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -129,7 +130,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: notification.isRead ? 1 : 3,
-      color: notification.isRead ? Colors.white : Colors.indigo.shade50,
+      color: notification.isRead ? Colors.white : AppColors.primary.withOpacity(0.1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () => _markAsRead(notification),
@@ -170,7 +171,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             width: 8,
                             height: 8,
                             decoration: const BoxDecoration(
-                              color: Colors.indigo,
+                              color: AppColors.primary,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -214,7 +215,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Color _getNotificationColor(String type) {
     switch (type.toLowerCase()) {
       case 'ride':
-        return Colors.indigo;
+        return AppColors.primary;
       case 'payment':
         return Colors.green;
       case 'emergency':

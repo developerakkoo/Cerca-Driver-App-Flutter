@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:driver_cerca/main.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'dart:async';
 
 class OverlayService {
@@ -187,7 +188,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.indigo[600],
+                  color: AppColors.primary,
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(16),
                     topRight: Radius.circular(16),
@@ -255,11 +256,11 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                     Row(
                       children: [
                         CircleAvatar(
-                          backgroundColor: Colors.indigo[100],
+                          backgroundColor: AppColors.primary.withOpacity(0.1),
                           child: Text(
                             widget.rideDetails['passengerName'][0],
                             style: TextStyle(
-                              color: Colors.indigo[700],
+                              color: AppColors.primary,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -362,7 +363,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                   child: ElevatedButton(
                     onPressed: _handleOpenApp,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.indigo[600],
+                      backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 18),
                       shape: RoundedRectangleBorder(
@@ -439,7 +440,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
   Widget _buildInfoColumn(IconData icon, String label, String value) {
     return Column(
       children: [
-        Icon(icon, color: Colors.indigo[600], size: 20),
+        Icon(icon, color: AppColors.primary, size: 20),
         const SizedBox(height: 4),
         Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
         const SizedBox(height: 2),
@@ -448,7 +449,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: Colors.indigo[700],
+            color: AppColors.primary,
           ),
         ),
       ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:driver_cerca/models/rating_model.dart';
 import 'package:driver_cerca/services/rating_service.dart';
 import 'package:driver_cerca/services/storage_service.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:intl/intl.dart';
 
 /// RatingsScreen displays all ratings received by the driver
@@ -61,7 +62,7 @@ class _RatingsScreenState extends State<RatingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Ratings'),
-        backgroundColor: Colors.indigo,
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadRatings),
@@ -131,7 +132,7 @@ class _RatingsScreenState extends State<RatingsScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.indigo.shade600, Colors.indigo.shade400],
+          colors: [AppColors.primary, AppColors.primary.withOpacity(0.7)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -273,11 +274,11 @@ class _RatingsScreenState extends State<RatingsScreen> {
               children: [
                 CircleAvatar(
                   radius: 20,
-                  backgroundColor: Colors.indigo.shade100,
+                  backgroundColor: AppColors.primary.withOpacity(0.1),
                   child: Text(
                     raterName[0].toUpperCase(),
                     style: TextStyle(
-                      color: Colors.indigo.shade700,
+                      color: AppColors.primary,
                       fontWeight: FontWeight.bold,
                     ),
                   ),

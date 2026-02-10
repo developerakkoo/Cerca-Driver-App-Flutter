@@ -9,6 +9,8 @@ import 'package:driver_cerca/providers/socket_provider.dart'
     show ConnectionState;
 import 'package:driver_cerca/models/ride_model.dart';
 import 'package:driver_cerca/screens/active_ride_screen.dart';
+import 'package:driver_cerca/screens/upcoming_bookings_screen.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
@@ -589,7 +591,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Expanded(child: Text(message)),
           ],
         ),
-        backgroundColor: Colors.blue,
+        backgroundColor: AppColors.primary,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -653,7 +655,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Expanded(child: Text(message)),
           ],
         ),
-        backgroundColor: Colors.blue,
+        backgroundColor: AppColors.primary,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -664,7 +666,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Dashboard"),
-        backgroundColor: Colors.indigo[600],
+        backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         actions: [
           // ✅ Use Consumer to reactively show driver online status
@@ -697,6 +699,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               );
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.calendar_today),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const UpcomingBookingsScreen(),
+                ),
+              );
+            },
+            tooltip: 'Upcoming Bookings',
           ),
           Consumer<SocketProvider>(
             builder: (context, socketProvider, child) {
@@ -902,12 +916,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.indigo[50],
+                    color: AppColors.primary.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     Icons.person,
-                    color: Colors.indigo[600],
+                    color: AppColors.primary,
                     size: 24,
                   ),
                 ),
@@ -916,12 +930,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        ride.rider?.fullName ?? 'Unknown Rider',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              ride.rider?.fullName ?? 'Unknown Rider',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          if (ride.isScheduledBooking())
+                            Container(
+                              margin: const EdgeInsets.only(left: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange[50],
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.orange[300]!,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.calendar_today,
+                                    size: 12,
+                                    color: Colors.orange[700],
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    ride.bookingType?.displayName ?? 'Scheduled',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                       Row(
                         children: [
@@ -959,6 +1014,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
+            // Show booking details for scheduled bookings
+            if (ride.isScheduledBooking() && ride.bookingMeta != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule,
+                          size: 16,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Booking Schedule',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (ride.bookingMeta!.startTime != null)
+                      _buildScheduleRow(
+                        'Starts',
+                        _formatDateTime(ride.bookingMeta!.startTime!),
+                      ),
+                    if (ride.bookingMeta!.endTime != null)
+                      _buildScheduleRow(
+                        'Ends',
+                        _formatDateTime(ride.bookingMeta!.endTime!),
+                      ),
+                    if (ride.bookingMeta!.days != null)
+                      _buildScheduleRow(
+                        'Duration',
+                        '${ride.bookingMeta!.days} days',
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             _buildLocationRow(
               Icons.my_location,
@@ -1039,15 +1145,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       );
                       socketProvider.acceptRide(ride.id);
 
-                      _showSuccessSnackBar('Ride accepted! Navigating...');
-
-                      // Navigate to ActiveRideScreen
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ActiveRideScreen(ride: ride),
-                        ),
-                      );
+                      // Check if this is a Full Day booking
+                      final isFullDayBooking = ride.isFullDayBooking();
+                      
+                      if (isFullDayBooking) {
+                        // For Full Day bookings: Show toast, add to calendar, DON'T navigate
+                        _showSuccessSnackBar('✅ Full Day booking accepted! Added to calendar.');
+                        print('📅 Full Day booking accepted - not navigating to active ride screen');
+                      } else {
+                        // For instant rides: Navigate to ActiveRideScreen
+                        _showSuccessSnackBar('Ride accepted! Navigating...');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ActiveRideScreen(ride: ride),
+                          ),
+                        );
+                      }
                     },
                     icon: const Icon(Icons.check),
                     label: const Text('Accept Ride'),
@@ -1118,5 +1232,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  Widget _buildScheduleRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final date = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    
+    String dateStr;
+    if (date == today) {
+      dateStr = 'Today';
+    } else if (date == today.add(const Duration(days: 1))) {
+      dateStr = 'Tomorrow';
+    } else {
+      dateStr = '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
+    
+    final timeStr = '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    
+    return '$dateStr at $timeStr';
   }
 }

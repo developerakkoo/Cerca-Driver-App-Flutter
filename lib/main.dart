@@ -23,9 +23,13 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:driver_cerca/services/auth_service.dart';
 import 'package:driver_cerca/services/socket_service.dart';
+import 'package:driver_cerca/services/audio_service.dart';
+import 'package:driver_cerca/services/storage_service.dart';
 import 'package:driver_cerca/providers/auth_provider.dart';
 import 'package:driver_cerca/providers/earnings_provider.dart';
 import 'package:driver_cerca/providers/socket_provider.dart';
+import 'package:driver_cerca/providers/payout_provider.dart';
+import 'package:driver_cerca/constants/constants.dart';
 import 'package:provider/provider.dart';
 
 @pragma('vm:entry-point')
@@ -73,6 +77,11 @@ class _OverlayAppState extends State<OverlayApp> {
   @override
   void initState() {
     super.initState();
+
+    // Initialize StorageService for overlay isolate
+    StorageService.initialize().catchError((e) {
+      print('⚠️ Error initializing StorageService in overlay: $e');
+    });
 
     // Listen for ride data from main isolate
     FlutterOverlayWindow.overlayListener.listen((data) {
@@ -228,6 +237,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => EarningsProvider()),
+        ChangeNotifierProvider(create: (_) => PayoutProvider()),
         ChangeNotifierProvider(create: (_) => SocketProvider()..initialize()),
       ],
       child: MaterialApp(
@@ -235,7 +245,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         navigatorKey:
             navigatorKey, // Global navigator key for background navigation
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+          colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
+          primaryColor: AppColors.primary,
         ),
         initialRoute: '/login',
         routes: {
@@ -308,12 +319,68 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
   void initState() {
     super.initState();
     _startTimeoutTimer();
+    _playNotificationSound();
   }
 
   @override
   void dispose() {
     _timeoutTimer?.cancel();
+    // Stop any playing sound when overlay is disposed
+    _stopSound();
     super.dispose();
+  }
+
+  /// Play notification sound when overlay appears
+  /// Since overlay runs in separate isolate, AudioService needs to be initialized here
+  /// Only plays sound if driver is authenticated AND overlay has valid ride data
+  Future<void> _playNotificationSound() async {
+    try {
+      // Check 1: Verify driver is actually authenticated (has valid token)
+      final token = await StorageService.getToken();
+      if (token == null || token.isEmpty) {
+        print('⛔ Cannot play sound: Driver not authenticated (no token found)');
+        return;
+      }
+
+      // Check 2: Verify driver ID exists
+      final driverId = await StorageService.getDriverId();
+      if (driverId == null) {
+        print('⛔ Cannot play sound: Driver not logged in (no driver ID found)');
+        return;
+      }
+
+      // Check 3: Verify overlay has valid ride data (not default/stale data)
+      // Default ride data has 'Unknown Rider' or 'RIDE_' prefix in rideId
+      final rideId = widget.rideDetails['rideId']?.toString() ?? '';
+      if (rideId.isEmpty || 
+          rideId.startsWith('RIDE_') || 
+          widget.rideDetails['passengerName'] == 'Unknown Rider') {
+        print('⛔ Cannot play sound: Overlay showing stale/default ride data');
+        return;
+      }
+
+      print('🔊 Driver is authenticated, initializing AudioService in overlay isolate...');
+      // Initialize AudioService in overlay isolate context
+      await AudioService.instance.initialize();
+      print('✅ AudioService initialized in overlay');
+      
+      print('🔊 Playing notification sound in overlay...');
+      await AudioService.instance.playRideRequestSound();
+      print('✅ Notification sound playback started');
+    } catch (e) {
+      print('⚠️ Error playing notification sound in overlay (non-critical): $e');
+      // Don't throw - gracefully degrade if sound cannot play
+    }
+  }
+
+  /// Stop sound playback
+  Future<void> _stopSound() async {
+    try {
+      await AudioService.instance.stop();
+      print('🛑 Sound stopped in overlay');
+    } catch (e) {
+      print('⚠️ Error stopping sound: $e');
+    }
   }
 
   void _startTimeoutTimer() {
@@ -478,11 +545,11 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                   Row(
                     children: [
                       CircleAvatar(
-                        backgroundColor: Colors.indigo[100],
+                        backgroundColor: AppColors.primary.withOpacity(0.1),
                         child: Text(
                           widget.rideDetails['passengerName'][0],
                           style: TextStyle(
-                            color: Colors.indigo[700],
+                            color: AppColors.primary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -589,7 +656,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
                 child: ElevatedButton(
                   onPressed: _handleOpenApp,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.indigo[600],
+                    backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 18),
                     shape: RoundedRectangleBorder(
@@ -666,7 +733,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
   Widget _buildInfoColumn(IconData icon, String label, String value) {
     return Column(
       children: [
-        Icon(icon, color: Colors.indigo[600], size: 20),
+        Icon(icon, color: AppColors.primary, size: 20),
         const SizedBox(height: 4),
         Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
         const SizedBox(height: 2),
@@ -675,7 +742,7 @@ class _RideRequestOverlayState extends State<RideRequestOverlay> {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: Colors.indigo[700],
+            color: AppColors.primary,
           ),
         ),
       ],

@@ -30,17 +30,34 @@ class RatingService {
       print('   Review: ${review ?? "No review"}');
       print('   Tags: ${tags ?? []}');
 
+      // Get authentication token
       final token = await StorageService.getToken();
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
+      // Get driver ID (required for ratedBy field)
+      final driverId = await StorageService.getDriverId();
+      if (driverId == null) {
+        throw Exception('Driver ID not found. Please log in again.');
+      }
+
+      // Map ratedToType to ratedToModel
+      // When driver rates rider: ratedToType='Rider' -> ratedToModel='User'
+      // When rider rates driver: ratedToType='Driver' -> ratedToModel='Driver'
+      final ratedToModel = ratedToType == 'Rider' ? 'User' : 'Driver';
+
+      print('   Driver ID: $driverId');
+      print('   Rated To Model: $ratedToModel');
+
       final response = await _dio.post(
-        '/ratings',
+        '/drivers/ratings',
         data: {
-          'ride': rideId,
+          'rideId': rideId, // Changed from 'ride'
+          'ratedBy': driverId, // Added: Driver ID
+          'ratedByModel': 'Driver', // Added: Always 'Driver' when driver submits rating
           'ratedTo': ratedToId,
-          'ratedToType': ratedToType,
+          'ratedToModel': ratedToModel, // Changed from 'ratedToType'
           'rating': rating,
           if (review != null && review.isNotEmpty) 'review': review,
           if (tags != null && tags.isNotEmpty) 'tags': tags,
@@ -60,6 +77,11 @@ class RatingService {
       if (e.response != null) {
         print('📦 Status Code: ${e.response?.statusCode}');
         print('📦 Response Data: ${e.response?.data}');
+        // Extract error message from response if available
+        final errorMessage = e.response?.data is Map
+            ? e.response?.data['message'] ?? e.message
+            : e.message;
+        throw Exception('Failed to submit rating: $errorMessage');
       }
       throw Exception('Failed to submit rating: ${e.message}');
     } catch (e) {
@@ -80,7 +102,7 @@ class RatingService {
       }
 
       final response = await _dio.get(
-        '/ratings/Driver/$driverId',
+        '/drivers/ratings/Driver/$driverId',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
@@ -126,7 +148,7 @@ class RatingService {
       }
 
       final response = await _dio.get(
-        '/ratings/Driver/$driverId/stats',
+        '/drivers/ratings/Driver/$driverId/stats',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
@@ -171,7 +193,7 @@ class RatingService {
       }
 
       final response = await _dio.get(
-        '/ratings/ride/$rideId',
+        '/drivers/ratings/ride/$rideId',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
